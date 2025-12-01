@@ -1,5 +1,5 @@
 {
-  "comment": "Configuration for spelling-fixer file type handling",
+  "comment": "Configuration for britfix file type handling",
   "strategies": {
     "text": {
       "description": "Plain text - convert everything",

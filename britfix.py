@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-British spelling fixer - corrects American spellings in files.
-Refactored to use the shared spell_checker_core module.
+Britfix - converts American spellings to British English.
 """
 import argparse
 import os

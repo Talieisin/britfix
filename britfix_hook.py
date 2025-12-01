@@ -29,27 +29,33 @@ def log(message: str):
 
 # Load supported extensions from config
 def load_supported_extensions():
-    """Load supported extensions from programming-exclusions.json and add text types."""
-    text_extensions = {'.md', '.txt', '.tex', '.html', '.htm', '.xml', '.json'}
-    code_extensions = set()
-    
-    config_path = HOOK_DIR / 'programming-exclusions.json'
+    """Load supported extensions from config.json."""
+    extensions = set()
+
+    config_path = HOOK_DIR / 'config.json'
     if config_path.exists():
         try:
             with open(config_path) as f:
                 data = json.load(f)
-                code_extensions = set(data.get('code_extensions', []))
+                strategies = data.get('strategies', {})
+                for strategy_config in strategies.values():
+                    extensions.update(strategy_config.get('extensions', []))
         except:
             pass
-    
-    return text_extensions | code_extensions
+
+    # Fallback defaults if config is empty
+    if not extensions:
+        extensions = {'.md', '.txt', '.tex', '.html', '.htm', '.xml', '.json',
+                      '.py', '.js', '.ts', '.jsx', '.tsx'}
+
+    return extensions
 
 SUPPORTED_EXTENSIONS = load_supported_extensions()
 
 
-def run_spelling_fixer(file_path: str) -> tuple[bool, str]:
+def run_britfix(file_path: str) -> tuple[bool, str]:
     """
-    Run the spelling fixer on a file.
+    Run britfix on a file.
     Returns (success, output_message).
     """
     cmd = ['uv', 'run', '--directory', str(HOOK_DIR), 
@@ -110,10 +116,10 @@ def process_posttooluse(hook_input: dict) -> dict:
     except:
         pass
     
-    success, message = run_spelling_fixer(file_path)
+    success, message = run_britfix(file_path)
     
     if message:
-        prefix = "[Spell]" if success else "[Spell Error]"
+        prefix = "[Britfix]" if success else "[Britfix Error]"
         log(f"{prefix} {Path(file_path).name}: {message}")
     
     return hook_input
