@@ -1,0 +1,28 @@
+{
+  "comment": "Configuration for spelling-fixer file type handling",
+  "strategies": {
+    "text": {
+      "description": "Plain text - convert everything",
+      "extensions": [".txt", ".md"]
+    },
+    "latex": {
+      "description": "LaTeX - skip commands and math",
+      "extensions": [".tex"]
+    },
+    "html": {
+      "description": "HTML/XML - skip tags",
+      "extensions": [".html", ".htm", ".xml"]
+    },
+    "json": {
+      "description": "JSON - only convert string values",
+      "extensions": [".json"]
+    },
+    "code": {
+      "description": "Code - only convert comments and docstrings (not string literals)",
+      "extensions": [
+        ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".hpp",
+        ".cs", ".rb", ".go", ".rs", ".swift", ".kt", ".scala", ".php", ".pl", ".sh"
+      ]
+    }
+  }
+}

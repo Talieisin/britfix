@@ -11,6 +11,9 @@ dependencies = [
 build = [
     "pyinstaller>=6.0.0",
 ]
+dev = [
+    "pytest>=8.0.0",
+]
 
 [project.scripts]
 spelling-fixer = "spelling_fixer:main"

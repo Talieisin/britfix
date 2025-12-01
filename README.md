@@ -1,14 +1,14 @@
 # Spelling Fixer
 
-A tool to convert American spellings to British English. Originally created to fix the US spelling output from LLMs like Claude, but useful for anyone who needs British spellings in their documents and code.
+A tool to convert American spellings to British English. Originally created to fix the US spelling output from LLMs, but useful for anyone who needs British spellings in their documents and code.
 
 ## Features
 
 - **Multiple File Types**: Text, markdown, LaTeX, HTML, JSON, and code files
-- **Programming Term Exclusions**: Preserves American spellings for common programming terms (e.g., `color`, `serialize`, `initialize`) in code files only
+- **Smart Code Handling**: Only converts comments and docstrings in code files, never string literals or identifiers
+- **Context-Aware**: Preserves quoted text like `'colorScheme'` in comments (API references)
 - **Interactive Mode**: Review and approve changes one by one
-- **Claude Code Hook**: Automatically fix spellings as Claude writes files
-- **Standalone Binary**: Build a single executable with no dependencies
+- **Hook Integration**: Automatically fix spellings when writing files
 
 ## Installation
 
@@ -50,42 +50,64 @@ spelling-fixer --input "src/*.py" --dry-run
 - `--recursive`: Process files recursively
 - `--quiet`: Only output corrected text (for pipelines)
 
-## File Types
+## File Type Strategies
 
-**Text files** (full conversion):
-`.txt`, `.md`, `.tex`, `.html`, `.htm`, `.xml`, `.json`
+Different file types are handled by different strategies, configured in `config.json`:
 
-**Code files** (programming exclusions applied):
-`.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.java`, `.cpp`, `.c`, `.h`, `.hpp`, `.cs`, `.rb`, `.go`, `.rs`, `.swift`, `.kt`, `.scala`, `.php`, `.pl`, `.sh`
+| Strategy | Extensions | Behaviour |
+|----------|------------|-----------|
+| **text** | `.txt`, `.md` | Convert everything |
+| **latex** | `.tex` | Skip LaTeX commands and math |
+| **html** | `.html`, `.htm`, `.xml` | Skip HTML tags |
+| **json** | `.json` | Only convert string values |
+| **code** | `.py`, `.js`, `.ts`, etc. | Only convert comments and docstrings |
 
-## Programming Exclusions
+### Code File Handling
 
-When processing code files, common programming terms are preserved in American spelling:
+For code files, the tool intelligently handles context:
 
-- `color`, `colored`, `colorize`
-- `center`, `centered`
-- `initialize`, `initialization`
-- `serialize`, `serialization`
-- `organize`, `organization`
-- `normalize`, `synchronize`, `authorize`, etc.
+**Converted** (prose in comments/docstrings):
+```python
+# The behavior is favorable  ->  # The behaviour is favourable
+"""This optimizes the color."""  ->  """This optimises the colour."""
+```
 
-Configure in `programming-exclusions.json`.
+**NOT converted** (code and API references):
+```python
+config.get('organization')      # String literal - unchanged
+payload = {'colorScheme': x}    # Dict key - unchanged  
+# Use 'colorField' for the API  # Quoted in comment - unchanged
+```
 
-## Claude Code Hook
+## Configuration
 
-Automatically fix spellings when Claude Code writes files.
+Edit `config.json` to customise file type handling:
+
+```json
+{
+  "strategies": {
+    "code": {
+      "extensions": [".py", ".js", ".ts", ...]
+    }
+  }
+}
+```
+
+## Hook Integration
+
+The `claude-spell-hook.py` script integrates with tools that support hooks to automatically fix spellings when files are written.
 
 ### Setup
 
 1. Install dependencies: `just sync`
 
-2. Add to `~/.claude/settings.json`:
+2. Configure your tool to call the hook. Example for settings:
 ```json
 {
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
@@ -113,9 +135,9 @@ Then watch: `tail -f /tmp/spell-hook.log`
 ```bash
 just sync          # Install dependencies
 just test          # Run tests
-just test-hook     # Test Claude Code hook
+just test-hook     # Test hook
 just build         # Build standalone binary
-just clean         # Remove build artifacts
+just clean         # Remove build artefacts
 ```
 
 ## License

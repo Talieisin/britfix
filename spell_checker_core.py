@@ -7,57 +7,23 @@ import os
 from typing import Dict, List, Tuple, Optional, Set
 from collections import defaultdict
 
-# Load programming exclusions config if available
-PROGRAMMING_EXCLUSIONS: Set[str] = set()
-CODE_EXTENSIONS: Set[str] = set()
-_exclusions_path = os.path.join(os.path.dirname(__file__), 'programming-exclusions.json')
-if os.path.exists(_exclusions_path):
+# Load configuration
+_config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+_CONFIG: Dict = {}
+if os.path.exists(_config_path):
     try:
-        with open(_exclusions_path, 'r') as f:
-            _data = json.load(f)
-            PROGRAMMING_EXCLUSIONS = set(word.lower() for word in _data.get('exclusions', []))
-            CODE_EXTENSIONS = set(ext.lower() for ext in _data.get('code_extensions', []))
+        with open(_config_path, 'r') as f:
+            _CONFIG = json.load(f)
     except:
         pass
 
 class SpellingCorrector:
     """Efficient spelling corrector with precompiled regex patterns."""
 
-    def __init__(self, dictionary: Dict[str, str], exclude_programming_terms: bool = False):
-        self.full_dictionary = {k.lower(): v for k, v in dictionary.items()}
-        self.exclude_programming_terms = exclude_programming_terms
-
-        # Create filtered dictionary for code files
-        if PROGRAMMING_EXCLUSIONS:
-            self.code_dictionary = {k: v for k, v in self.full_dictionary.items()
-                                   if k not in PROGRAMMING_EXCLUSIONS}
-        else:
-            self.code_dictionary = self.full_dictionary
-
-        # Default to full dictionary
-        self.dictionary = self.full_dictionary
+    def __init__(self, dictionary: Dict[str, str]):
+        self.dictionary = {k.lower(): v for k, v in dictionary.items()}
         self.pattern = self._compile_pattern()
 
-        # Also compile pattern for code dictionary
-        self._code_pattern = self._compile_pattern_for_dict(self.code_dictionary)
-        self._full_pattern = self.pattern
-
-    def _compile_pattern_for_dict(self, dictionary: Dict[str, str]) -> Optional[re.Pattern]:
-        """Compile regex pattern for a given dictionary."""
-        if not dictionary:
-            return None
-        pattern = r'\b(' + '|'.join(re.escape(word) for word in dictionary.keys()) + r')\b'
-        return re.compile(pattern, re.IGNORECASE)
-
-    def use_code_mode(self, enabled: bool = True):
-        """Switch between code mode (with exclusions) and normal mode."""
-        if enabled:
-            self.dictionary = self.code_dictionary
-            self.pattern = self._code_pattern
-        else:
-            self.dictionary = self.full_dictionary
-            self.pattern = self._full_pattern
-        
     def _compile_pattern(self) -> Optional[re.Pattern]:
         """Compile regex pattern for all dictionary words."""
         if not self.dictionary:
@@ -252,78 +218,252 @@ class JSONStrategy(FileProcessingStrategy):
 
 
 class CodeStrategy(FileProcessingStrategy):
-    """Process code files, only correcting comments and strings."""
-    
-    def __init__(self):
-        # For code files, we always want to respect programming terms
-        self.enforce_programming_exclusions = True
-    
+    """
+    Process code files - only convert prose in comments and docstrings.
+
+    NEVER converts:
+    - String literals (API keys, config values, etc.)
+    - Text inside quotes within comments (API references)
+    - Variable names, function names, etc.
+
+    DOES convert:
+    - Unquoted prose in comments (# The behavior is good)
+    - Unquoted prose in docstrings
+    """
+
     def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
-        lines = content.split('\n')
-        corrected_lines = []
         total_changes = defaultdict(int)
-        
-        for line in lines:
-            # Simple heuristic: correct text in comments and strings
-            if '#' in line:  # Python, Ruby, etc. comments
-                parts = line.split('#', 1)
-                if len(parts) == 2:
-                    corrected, changes = corrector.correct_text(parts[1])
-                    parts[1] = corrected
+        result = []
+
+        # Process the content, identifying comments and docstrings
+        i = 0
+        while i < len(content):
+            # Check for triple-quoted strings
+            if content[i:i+3] in ('"""', "'''"):
+                quote = content[i:i+3]
+                end = content.find(quote, i + 3)
+                if end == -1:
+                    end = len(content)
+                else:
+                    end += 3
+
+                # Check if this is a string literal (preceded by = or prefix like r/f/b)
+                # vs a docstring (at start of line after def/class or at module level)
+                preceding = ''.join(result).rstrip()
+                is_string_literal = (
+                    preceding.endswith('=') or
+                    preceding.endswith('r') or preceding.endswith('f') or
+                    preceding.endswith('b') or preceding.endswith('rf') or
+                    preceding.endswith('fr') or preceding.endswith('br') or
+                    preceding.endswith('rb')
+                )
+
+                if is_string_literal:
+                    # String literal - don't convert
+                    result.append(content[i:end])
+                else:
+                    # Docstring - convert prose
+                    docstring = content[i:end]
+                    corrected, changes = self._process_docstring(docstring, corrector)
+                    result.append(corrected)
                     for word, count in changes.items():
                         total_changes[word] += count
-                    line = '#'.join(parts)
-            elif '//' in line:  # C-style comments
-                parts = line.split('//', 1)
-                if len(parts) == 2:
-                    corrected, changes = corrector.correct_text(parts[1])
-                    parts[1] = corrected
-                    for word, count in changes.items():
-                        total_changes[word] += count
-                    line = '//'.join(parts)
-            
-            # Process strings (simplified - doesn't handle all cases)
-            string_pattern = r'(["\'])([^"\']*)\1'
-            def replace_string(match):
-                quote = match.group(1)
-                content = match.group(2)
-                corrected, changes = corrector.correct_text(content)
+                i = end
+                continue
+
+            # Check for block comments /* ... */ or /** ... */
+            if content[i:i+2] == '/*':
+                end = content.find('*/', i + 2)
+                if end == -1:
+                    end = len(content)
+                else:
+                    end += 2
+
+                comment = content[i:end]
+                corrected, changes = self._process_comment(comment, corrector)
+                result.append(corrected)
                 for word, count in changes.items():
                     total_changes[word] += count
-                return f'{quote}{corrected}{quote}'
-            
-            line = re.sub(string_pattern, replace_string, line)
-            corrected_lines.append(line)
-            
-        return '\n'.join(corrected_lines), dict(total_changes)
+                i = end
+                continue
+
+            # Check for line comments (# or //)
+            if content[i] == '#' or content[i:i+2] == '//':
+                # Find end of line
+                end = content.find('\n', i)
+                if end == -1:
+                    end = len(content)
+
+                comment = content[i:end]
+                corrected, changes = self._process_comment(comment, corrector)
+                result.append(corrected)
+                for word, count in changes.items():
+                    total_changes[word] += count
+                i = end
+                continue
+
+            # Check for string literals - skip them entirely
+            if content[i] in ('"', "'"):
+                quote = content[i]
+                # Handle escaped quotes
+                j = i + 1
+                while j < len(content):
+                    if content[j] == '\\':
+                        j += 2  # Skip escaped char
+                        continue
+                    if content[j] == quote:
+                        j += 1
+                        break
+                    j += 1
+
+                result.append(content[i:j])  # Keep string unchanged
+                i = j
+                continue
+
+            # Regular code - keep unchanged
+            result.append(content[i])
+            i += 1
+
+        return ''.join(result), dict(total_changes)
+
+    def _process_comment(self, comment: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+        """
+        Process a comment, converting only unquoted prose.
+        Preserves quoted text like 'apiFieldName' or "colorScheme".
+        """
+        return self._convert_unquoted_text(comment, corrector)
+
+    def _process_docstring(self, docstring: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+        """
+        Process a docstring, converting only unquoted prose.
+        Preserves quoted text and code examples.
+        """
+        return self._convert_unquoted_text(docstring, corrector)
+
+    def _convert_unquoted_text(self, text: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+        """
+        Convert text but preserve anything inside quotes.
+        Handles triple quotes (docstring delimiters) specially.
+        """
+        total_changes = defaultdict(int)
+        result = []
+        i = 0
+
+        while i < len(text):
+            # Check for triple quotes first (docstring delimiters) - skip them
+            if text[i:i+3] in ('"""', "'''"):
+                result.append(text[i:i+3])
+                i += 3
+                continue
+
+            # Check for quoted text - preserve it (single 'word' or "word")
+            # But handle contractions like "It's" - apostrophe between letters is not a quote
+            if text[i] in ('"', "'"):
+                quote = text[i]
+
+                # Check if this is a contraction (apostrophe between letters)
+                if quote == "'":
+                    prev_is_letter = i > 0 and text[i-1].isalpha()
+                    next_is_letter = i + 1 < len(text) and text[i+1].isalpha()
+                    if prev_is_letter and next_is_letter:
+                        # It's a contraction, not a quoted string - keep it as prose
+                        result.append(text[i])
+                        i += 1
+                        continue
+
+                # Regular quoted string
+                j = i + 1
+                while j < len(text) and text[j] != quote:
+                    if text[j] == '\\':
+                        j += 2
+                        continue
+                    j += 1
+                if j < len(text):
+                    j += 1  # Include closing quote
+
+                result.append(text[i:j])  # Keep quoted text unchanged
+                i = j
+                continue
+
+            # Check for backtick code spans - preserve them
+            if text[i] == '`':
+                j = i + 1
+                while j < len(text) and text[j] != '`':
+                    j += 1
+                if j < len(text):
+                    j += 1
+
+                result.append(text[i:j])  # Keep code spans unchanged
+                i = j
+                continue
+
+            # Find the next quote or end of text
+            next_quote = len(text)
+            for q in ('"', "'", '`'):
+                pos = text.find(q, i)
+                if pos != -1 and pos < next_quote:
+                    next_quote = pos
+
+            # Process unquoted segment
+            segment = text[i:next_quote]
+            if segment:
+                corrected, changes = corrector.correct_text(segment)
+                result.append(corrected)
+                for word, count in changes.items():
+                    total_changes[word] += count
+
+            i = next_quote
+
+        return ''.join(result), dict(total_changes)
 
 
-# Create code strategy instance to reuse
-_code_strategy = CodeStrategy()
-
-# File type to strategy mapping
-FILE_STRATEGIES = {
-    '.txt': PlainTextStrategy(),
-    '.md': PlainTextStrategy(),
-    '.tex': LaTeXStrategy(),
-    '.html': HTMLStrategy(),
-    '.htm': HTMLStrategy(),
-    '.xml': HTMLStrategy(),
-    '.json': JSONStrategy(),
-    '.py': _code_strategy,
-    '.js': _code_strategy,
-    '.java': _code_strategy,
-    '.cpp': _code_strategy,
-    '.c': _code_strategy,
-    '.h': _code_strategy,
-    '.hpp': _code_strategy,
-    '.cs': _code_strategy,
-    '.rb': _code_strategy,
-    '.go': _code_strategy,
-    '.rs': _code_strategy,
-    '.swift': _code_strategy,
-    '.kt': _code_strategy,
+# Strategy instances
+_STRATEGY_INSTANCES = {
+    'text': PlainTextStrategy(),
+    'latex': LaTeXStrategy(),
+    'html': HTMLStrategy(),
+    'json': JSONStrategy(),
+    'code': CodeStrategy(),
 }
+
+# Build file extension to strategy mapping from config
+def _build_file_strategies() -> Dict[str, FileProcessingStrategy]:
+    """Build FILE_STRATEGIES from config.json."""
+    strategies = {}
+    config_strategies = _CONFIG.get('strategies', {})
+
+    for strategy_name, strategy_config in config_strategies.items():
+        strategy_instance = _STRATEGY_INSTANCES.get(strategy_name)
+        if strategy_instance:
+            for ext in strategy_config.get('extensions', []):
+                strategies[ext.lower()] = strategy_instance
+
+    # Fallback defaults if config is empty
+    if not strategies:
+        strategies = {
+            '.txt': _STRATEGY_INSTANCES['text'],
+            '.md': _STRATEGY_INSTANCES['text'],
+            '.tex': _STRATEGY_INSTANCES['latex'],
+            '.html': _STRATEGY_INSTANCES['html'],
+            '.htm': _STRATEGY_INSTANCES['html'],
+            '.xml': _STRATEGY_INSTANCES['html'],
+            '.json': _STRATEGY_INSTANCES['json'],
+            '.py': _STRATEGY_INSTANCES['code'],
+            '.js': _STRATEGY_INSTANCES['code'],
+        }
+
+    return strategies
+
+FILE_STRATEGIES = _build_file_strategies()
+
+# Build CODE_EXTENSIONS set from config
+def _build_code_extensions() -> Set[str]:
+    """Get code extensions from config."""
+    config_strategies = _CONFIG.get('strategies', {})
+    code_config = config_strategies.get('code', {})
+    return set(ext.lower() for ext in code_config.get('extensions', []))
+
+CODE_EXTENSIONS = _build_code_extensions()
 
 
 def get_file_strategy(file_extension: str) -> FileProcessingStrategy:
@@ -332,5 +472,5 @@ def get_file_strategy(file_extension: str) -> FileProcessingStrategy:
 
 
 def is_code_file(file_extension: str) -> bool:
-    """Check if file extension is a code file that should use programming exclusions."""
+    """Check if file extension is a code file."""
     return file_extension.lower() in CODE_EXTENSIONS

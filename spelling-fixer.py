@@ -51,7 +51,6 @@ from spell_checker_core import (
     SpellingCorrector,
     load_spelling_mappings,
     get_file_strategy,
-    is_code_file
 )
 
 
@@ -337,9 +336,8 @@ Examples:
             logging.error("No input provided. Specify --input patterns or pipe data to stdin.")
             sys.exit(1)
         
-        # Process stdin (treated as plain text, no programming exclusions)
+        # Process stdin (treated as plain text)
         content = sys.stdin.read()
-        corrector.use_code_mode(False)
         if args.interactive:
             corrected_content, changes = process_stdin_interactive(content, corrector)
         else:
@@ -382,9 +380,6 @@ Examples:
             # Get the appropriate processing strategy
             ext = os.path.splitext(filepath)[1].lower()
             strategy = get_file_strategy(ext)
-
-            # Use code mode for programming files (excludes programming terms)
-            corrector.use_code_mode(is_code_file(ext))
 
             # Process the file
             if args.interactive:
