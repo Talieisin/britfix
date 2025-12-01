@@ -1,21 +1,64 @@
 """
-Core spell checking functionality shared between CLI tool and Claude Code hook.
+Britfix core - spelling correction engine.
 """
 import re
 import json
 import os
+import sys
 from typing import Dict, List, Tuple, Optional, Set
 from collections import defaultdict
 
-# Load configuration
-_config_path = os.path.join(os.path.dirname(__file__), 'config.json')
-_CONFIG: Dict = {}
-if os.path.exists(_config_path):
+
+class ConfigError(Exception):
+    """Raised when config.json is missing or invalid."""
+    pass
+
+
+def _load_config() -> Dict:
+    """Load and validate config.json."""
+    config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+
+    if not os.path.exists(config_path):
+        raise ConfigError(f"Config file not found: {config_path}")
+
     try:
-        with open(_config_path, 'r') as f:
-            _CONFIG = json.load(f)
-    except:
-        pass
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f"Invalid JSON in config file: {e}")
+
+    # Validate structure
+    if 'strategies' not in config:
+        raise ConfigError("Config missing 'strategies' key")
+
+    strategies = config['strategies']
+    if not isinstance(strategies, dict):
+        raise ConfigError("Config 'strategies' must be an object")
+
+    required_strategies = {'text', 'code'}
+    missing = required_strategies - set(strategies.keys())
+    if missing:
+        raise ConfigError(f"Config missing required strategies: {missing}")
+
+    for name, strategy in strategies.items():
+        if not isinstance(strategy, dict):
+            raise ConfigError(f"Strategy '{name}' must be an object")
+        if 'extensions' not in strategy:
+            raise ConfigError(f"Strategy '{name}' missing 'extensions' key")
+        if not isinstance(strategy['extensions'], list):
+            raise ConfigError(f"Strategy '{name}' extensions must be a list")
+        if not strategy['extensions']:
+            raise ConfigError(f"Strategy '{name}' has no extensions defined")
+
+    return config
+
+
+# Load config at module import time - fail fast if invalid
+try:
+    _CONFIG = _load_config()
+except ConfigError as e:
+    print(f"Britfix config error: {e}", file=sys.stderr)
+    sys.exit(1)
 
 class SpellingCorrector:
     """Efficient spelling corrector with precompiled regex patterns."""
@@ -430,27 +473,13 @@ _STRATEGY_INSTANCES = {
 def _build_file_strategies() -> Dict[str, FileProcessingStrategy]:
     """Build FILE_STRATEGIES from config.json."""
     strategies = {}
-    config_strategies = _CONFIG.get('strategies', {})
+    config_strategies = _CONFIG['strategies']
 
     for strategy_name, strategy_config in config_strategies.items():
         strategy_instance = _STRATEGY_INSTANCES.get(strategy_name)
         if strategy_instance:
-            for ext in strategy_config.get('extensions', []):
+            for ext in strategy_config['extensions']:
                 strategies[ext.lower()] = strategy_instance
-
-    # Fallback defaults if config is empty
-    if not strategies:
-        strategies = {
-            '.txt': _STRATEGY_INSTANCES['text'],
-            '.md': _STRATEGY_INSTANCES['text'],
-            '.tex': _STRATEGY_INSTANCES['latex'],
-            '.html': _STRATEGY_INSTANCES['html'],
-            '.htm': _STRATEGY_INSTANCES['html'],
-            '.xml': _STRATEGY_INSTANCES['html'],
-            '.json': _STRATEGY_INSTANCES['json'],
-            '.py': _STRATEGY_INSTANCES['code'],
-            '.js': _STRATEGY_INSTANCES['code'],
-        }
 
     return strategies
 

@@ -27,30 +27,40 @@ def log(message: str):
         except:
             pass
 
-# Load supported extensions from config
-def load_supported_extensions():
-    """Load supported extensions from config.json."""
-    extensions = set()
-
+# Load and validate config
+def load_config():
+    """Load and validate config.json. Exits if invalid."""
     config_path = HOOK_DIR / 'config.json'
-    if config_path.exists():
-        try:
-            with open(config_path) as f:
-                data = json.load(f)
-                strategies = data.get('strategies', {})
-                for strategy_config in strategies.values():
-                    extensions.update(strategy_config.get('extensions', []))
-        except:
-            pass
 
-    # Fallback defaults if config is empty
-    if not extensions:
-        extensions = {'.md', '.txt', '.tex', '.html', '.htm', '.xml', '.json',
-                      '.py', '.js', '.ts', '.jsx', '.tsx'}
+    if not config_path.exists():
+        log(f"[Britfix Error] Config file not found: {config_path}")
+        sys.exit(1)
 
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except json.JSONDecodeError as e:
+        log(f"[Britfix Error] Invalid JSON in config: {e}")
+        sys.exit(1)
+
+    if 'strategies' not in config or not isinstance(config['strategies'], dict):
+        log("[Britfix Error] Config missing 'strategies' object")
+        sys.exit(1)
+
+    return config
+
+
+def load_supported_extensions(config: dict) -> set:
+    """Extract all supported extensions from config."""
+    extensions = set()
+    for strategy_config in config['strategies'].values():
+        if 'extensions' in strategy_config:
+            extensions.update(strategy_config['extensions'])
     return extensions
 
-SUPPORTED_EXTENSIONS = load_supported_extensions()
+
+_CONFIG = load_config()
+SUPPORTED_EXTENSIONS = load_supported_extensions(_CONFIG)
 
 
 def run_britfix(file_path: str) -> tuple[bool, str]:

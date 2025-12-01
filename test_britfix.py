@@ -226,5 +226,34 @@ class TestFileExtensions:
         assert is_code_file('.txt') == False
 
 
+class TestConfigValidation:
+    """Test config loading and validation."""
+
+    def test_config_loaded(self):
+        """Config should be loaded at module import."""
+        from britfix_core import _CONFIG
+        assert _CONFIG is not None
+        assert 'strategies' in _CONFIG
+
+    def test_config_has_required_strategies(self):
+        """Config must have text and code strategies."""
+        from britfix_core import _CONFIG
+        assert 'text' in _CONFIG['strategies']
+        assert 'code' in _CONFIG['strategies']
+
+    def test_strategies_have_extensions(self):
+        """Each strategy must have extensions list."""
+        from britfix_core import _CONFIG
+        for name, strategy in _CONFIG['strategies'].items():
+            assert 'extensions' in strategy, f"Strategy '{name}' missing extensions"
+            assert isinstance(strategy['extensions'], list)
+            assert len(strategy['extensions']) > 0, f"Strategy '{name}' has no extensions"
+
+    def test_config_error_class_exists(self):
+        """ConfigError should be importable."""
+        from britfix_core import ConfigError
+        assert issubclass(ConfigError, Exception)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
