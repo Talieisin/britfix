@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Tests for spelling fixer - especially CodeStrategy context handling.
+Tests for britfix - especially CodeStrategy context handling.
 """
 import pytest
-from spell_checker_core import (
+from britfix_core import (
     SpellingCorrector,
     load_spelling_mappings,
     CodeStrategy,

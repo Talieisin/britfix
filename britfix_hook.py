@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Claude Code spell checking hook.
+Britfix hook - converts US spellings to British.
 Processes files after they're written (PostToolUse).
 """
 import json
@@ -14,8 +14,8 @@ from datetime import datetime
 # Directory where this hook lives
 HOOK_DIR = Path(__file__).parent.resolve()
 
-# Optional log file - set SPELL_HOOK_LOG env var to enable
-LOG_FILE = os.getenv('SPELL_HOOK_LOG', '')
+# Optional log file - set BRITFIX_LOG env var to enable
+LOG_FILE = os.getenv('BRITFIX_LOG', '')
 
 def log(message: str):
     """Log to stderr and optionally to file."""
@@ -53,7 +53,7 @@ def run_spelling_fixer(file_path: str) -> tuple[bool, str]:
     Returns (success, output_message).
     """
     cmd = ['uv', 'run', '--directory', str(HOOK_DIR), 
-           'python', 'spelling-fixer.py', '--input', file_path, '--no-backup']
+           'python', 'britfix.py', '--input', file_path, '--no-backup']
     
     try:
         result = subprocess.run(
@@ -103,7 +103,7 @@ def process_posttooluse(hook_input: dict) -> dict:
     if ext not in SUPPORTED_EXTENSIONS:
         return hook_input
     
-    # Skip files in the spelling-fixer directory itself to avoid recursion
+    # Skip files in the britfix directory itself to avoid recursion
     try:
         if HOOK_DIR in Path(file_path).resolve().parents or Path(file_path).resolve().parent == HOOK_DIR:
             return hook_input

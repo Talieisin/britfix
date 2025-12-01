@@ -1,7 +1,7 @@
 [project]
-name = "spelling-fixer"
+name = "britfix"
 version = "1.0.0"
-description = "British spelling correction tool"
+description = "Convert American spellings to British English"
 requires-python = ">=3.9"
 dependencies = [
     "colorama>=0.4.6",
@@ -16,7 +16,7 @@ dev = [
 ]
 
 [project.scripts]
-spelling-fixer = "spelling_fixer:main"
+britfix = "britfix:main"
 
 [build-system]
 requires = ["hatchling"]

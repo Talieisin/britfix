@@ -46,8 +46,8 @@ def clear_to_end():
     """Clear from cursor to end of screen."""
     print('\033[0J', end='')
 
-# Import our shared spell checking core
-from spell_checker_core import (
+# Import our shared core module
+from britfix_core import (
     SpellingCorrector,
     load_spelling_mappings,
     get_file_strategy,

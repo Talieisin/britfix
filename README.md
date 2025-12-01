@@ -1,6 +1,6 @@
-# Spelling Fixer
+# Britfix
 
-A tool to convert American spellings to British English. Originally created to fix the US spelling output from LLMs, but useful for anyone who needs British spellings in their documents and code.
+Convert American spellings to British English. Originally created to fix the US spelling output from LLMs, but useful for anyone who needs British spellings in their documents and code.
 
 ## Features
 
@@ -27,18 +27,18 @@ just build && just install
 
 ```bash
 # Process files
-spelling-fixer --input file.txt
-spelling-fixer --input "*.md" --recursive
+britfix --input file.txt
+britfix --input "*.md" --recursive
 
 # Process from stdin
-echo "The color was analyzed" | spelling-fixer --quiet
+echo "The color was analyzed" | britfix --quiet
 # Output: The colour was analysed
 
 # Interactive mode
-spelling-fixer --input document.md --interactive
+britfix --input document.md --interactive
 
 # Dry run
-spelling-fixer --input "src/*.py" --dry-run
+britfix --input "src/*.py" --dry-run
 ```
 
 ### Options
@@ -95,7 +95,7 @@ Edit `config.json` to customise file type handling:
 
 ## Hook Integration
 
-The `claude-spell-hook.py` script integrates with tools that support hooks to automatically fix spellings when files are written.
+The `britfix_hook.py` script integrates with tools that support hooks to automatically fix spellings when files are written.
 
 ### Setup
 
@@ -111,7 +111,7 @@ The `claude-spell-hook.py` script integrates with tools that support hooks to au
         "hooks": [
           {
             "type": "command",
-            "command": "/absolute/path/to/spelling-fixer/run-hook.sh",
+            "command": "/absolute/path/to/britfix/run-hook.sh",
             "timeout": 10
           }
         ]
@@ -125,10 +125,10 @@ The `claude-spell-hook.py` script integrates with tools that support hooks to au
 
 Enable logging by uncommenting in `run-hook.sh`:
 ```bash
-export SPELL_HOOK_LOG=/tmp/spell-hook.log
+export BRITFIX_LOG=/tmp/britfix.log
 ```
 
-Then watch: `tail -f /tmp/spell-hook.log`
+Then watch: `tail -f /tmp/britfix.log`
 
 ## Development
 
