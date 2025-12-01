@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# uv
+.python-version
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# macOS
+.DS_Store

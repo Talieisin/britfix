@@ -1,0 +1,23 @@
+[project]
+name = "spelling-fixer"
+version = "1.0.0"
+description = "British spelling correction tool"
+requires-python = ">=3.9"
+dependencies = [
+    "colorama>=0.4.6",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.0.0",
+]
+
+[project.scripts]
+spelling-fixer = "spelling_fixer:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
