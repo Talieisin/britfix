@@ -56,7 +56,8 @@ Different file types are handled by different strategies, configured in `config.
 
 | Strategy | Extensions | Behaviour |
 |----------|------------|-----------|
-| **text** | `.txt`, `.md` | Convert everything |
+| **text** | `.txt` | Convert everything |
+| **markdown** | `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx` | Preserve code spans and code blocks |
 | **latex** | `.tex` | Skip LaTeX commands and math |
 | **html** | `.html`, `.htm`, `.xml` | Skip HTML tags |
 | **json** | `.json` | Only convert string values |

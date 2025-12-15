@@ -3,7 +3,11 @@
   "strategies": {
     "text": {
       "description": "Plain text - convert everything",
-      "extensions": [".txt", ".md"]
+      "extensions": [".txt"]
+    },
+    "markdown": {
+      "description": "Markdown - preserve code spans and code blocks",
+      "extensions": [".md", ".markdown", ".mdown", ".mkd", ".mdx"]
     },
     "latex": {
       "description": "LaTeX - skip commands and math",
