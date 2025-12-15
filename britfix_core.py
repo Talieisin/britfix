@@ -170,6 +170,196 @@ class PlainTextStrategy(FileProcessingStrategy):
     pass
 
 
+class MarkdownStrategy(FileProcessingStrategy):
+    """Process markdown files, preserving code spans and code blocks."""
+
+    def _is_at_line_start(self, content: str, pos: int) -> bool:
+        """Check if position is at the start of a line (after newline or at pos 0)."""
+        return pos == 0 or content[pos - 1] == '\n'
+
+    def _count_fence_chars(self, content: str, pos: int, char: str) -> int:
+        """Count consecutive fence characters at position."""
+        count = 0
+        while pos + count < len(content) and content[pos + count] == char:
+            count += 1
+        return count
+
+    def _find_closing_fence(self, content: str, start: int, fence_char: str, fence_len: int) -> int:
+        """
+        Find closing fence that matches the opening fence length.
+        Allows up to 3 spaces of indentation before the closing fence.
+        Returns position of the closing fence, or -1 if not found.
+        """
+        pos = start
+        while pos < len(content):
+            # Find next newline
+            newline_pos = content.find('\n', pos)
+            if newline_pos == -1:
+                break
+
+            # Check the line after the newline
+            line_start = newline_pos + 1
+            if line_start >= len(content):
+                break
+
+            # Allow up to 3 spaces of indentation
+            indent = 0
+            while indent < 3 and line_start + indent < len(content) and content[line_start + indent] == ' ':
+                indent += 1
+
+            fence_start = line_start + indent
+
+            # Check if this line starts with the fence character
+            if fence_start < len(content) and content[fence_start] == fence_char:
+                closing_len = self._count_fence_chars(content, fence_start, fence_char)
+                # Closing fence must be at least as long as opening
+                if closing_len >= fence_len:
+                    return newline_pos  # Return position of newline before fence
+
+            pos = newline_pos + 1
+
+        return -1
+
+    def _find_indented_block_end(self, content: str, start: int) -> int:
+        """
+        Find end of indented code block (4 spaces or 1 tab).
+        Returns position after the last line of the indented block.
+        """
+        pos = start
+        while pos < len(content):
+            # Find end of current line
+            line_end = content.find('\n', pos)
+            if line_end == -1:
+                line_end = len(content)
+
+            # Check next line
+            next_line_start = line_end + 1 if line_end < len(content) else len(content)
+            if next_line_start >= len(content):
+                return len(content)
+
+            # Check if next line is also indented or blank
+            if content[next_line_start:next_line_start + 4] == '    ' or \
+               (next_line_start < len(content) and content[next_line_start] == '\t'):
+                pos = next_line_start
+            elif next_line_start < len(content) and content[next_line_start] == '\n':
+                # Blank line - could continue the block, check line after
+                pos = next_line_start
+            else:
+                # Not indented, end of block
+                return line_end + 1 if line_end < len(content) else len(content)
+
+        return len(content)
+
+    def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+        total_changes = defaultdict(int)
+        result = []
+        i = 0
+
+        while i < len(content):
+            # Check for fenced code blocks (``` or ~~~) - must be at start of line
+            if self._is_at_line_start(content, i) and content[i] in ('`', '~'):
+                fence_char = content[i]
+                fence_len = self._count_fence_chars(content, i, fence_char)
+
+                # Fenced code blocks require at least 3 fence characters
+                if fence_len >= 3:
+                    # Find end of opening fence line (may include language specifier)
+                    line_end = content.find('\n', i)
+                    if line_end == -1:
+                        # No newline, rest of content is the fence opener
+                        result.append(content[i:])
+                        break
+
+                    # Find closing fence
+                    close_pos = self._find_closing_fence(content, line_end + 1, fence_char, fence_len)
+                    if close_pos == -1:
+                        # No closing fence, treat rest as code block
+                        result.append(content[i:])
+                        break
+
+                    # Find end of closing fence line
+                    close_line_start = close_pos + 1
+                    close_line_end = content.find('\n', close_line_start)
+                    if close_line_end == -1:
+                        close_line_end = len(content)
+                    else:
+                        close_line_end += 1  # Include the newline
+
+                    # Preserve entire code block unchanged
+                    result.append(content[i:close_line_end])
+                    i = close_line_end
+                    continue
+
+            # Check for indented code blocks (4 spaces or tab at start of line)
+            if self._is_at_line_start(content, i):
+                if content[i:i + 4] == '    ' or content[i] == '\t':
+                    # Find end of indented block
+                    block_end = self._find_indented_block_end(content, i)
+                    result.append(content[i:block_end])
+                    i = block_end
+                    continue
+
+            # Check for inline code spans (backticks)
+            if content[i] == '`':
+                # Count consecutive backticks
+                backtick_count = self._count_fence_chars(content, i, '`')
+                j = i + backtick_count
+
+                # Find matching closing backticks
+                close_pattern = '`' * backtick_count
+                close_pos = content.find(close_pattern, j)
+                if close_pos == -1:
+                    # No closing backticks, just add this char and continue
+                    result.append(content[i])
+                    i += 1
+                    continue
+
+                # Preserve inline code unchanged
+                end = close_pos + backtick_count
+                result.append(content[i:end])
+                i = end
+                continue
+
+            # Find next potential code delimiter
+            next_code = len(content)
+
+            # Look for backticks (inline code or potential fence at line start)
+            backtick_pos = content.find('`', i)
+            if backtick_pos != -1:
+                next_code = min(next_code, backtick_pos)
+
+            # Look for tilde (potential fence at line start)
+            tilde_pos = content.find('~', i)
+            if tilde_pos != -1:
+                next_code = min(next_code, tilde_pos)
+
+            # Look for potential indented code block (newline followed by 4 spaces or tab)
+            pos = i
+            while pos < next_code:
+                newline_pos = content.find('\n', pos)
+                if newline_pos == -1 or newline_pos >= next_code:
+                    break
+                # Check if next line starts with indent
+                next_char_pos = newline_pos + 1
+                if next_char_pos < len(content):
+                    if content[next_char_pos:next_char_pos + 4] == '    ' or content[next_char_pos] == '\t':
+                        next_code = min(next_code, next_char_pos)
+                        break
+                pos = newline_pos + 1
+
+            # Process text up to next code delimiter
+            segment = content[i:next_code]
+            if segment:
+                corrected, changes = corrector.correct_text(segment)
+                result.append(corrected)
+                for word, count in changes.items():
+                    total_changes[word] += count
+
+            i = next_code
+
+        return ''.join(result), dict(total_changes)
+
+
 class LaTeXStrategy(FileProcessingStrategy):
     """Process LaTeX files, preserving commands."""
     
@@ -463,6 +653,7 @@ class CodeStrategy(FileProcessingStrategy):
 # Strategy instances
 _STRATEGY_INSTANCES = {
     'text': PlainTextStrategy(),
+    'markdown': MarkdownStrategy(),
     'latex': LaTeXStrategy(),
     'html': HTMLStrategy(),
     'json': JSONStrategy(),

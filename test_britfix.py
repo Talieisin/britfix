@@ -8,6 +8,7 @@ from britfix_core import (
     load_spelling_mappings,
     CodeStrategy,
     PlainTextStrategy,
+    MarkdownStrategy,
     is_code_file,
     CODE_EXTENSIONS
 )
@@ -115,6 +116,269 @@ class TestCodeStrategy:
         result, changes = strategy.process(code, corrector)
         assert "analyses" in result or "analyzes" in result  # analyzes might be excluded
         assert "colour" in result or "color" in result  # color might be excluded
+
+
+class TestMarkdownStrategy:
+    """MarkdownStrategy should preserve code spans and code blocks."""
+
+    @pytest.fixture
+    def strategy(self):
+        return MarkdownStrategy()
+
+    # === INLINE CODE SPANS ===
+
+    def test_inline_code_not_converted(self, strategy, corrector):
+        """Inline code spans should not be converted."""
+        text = "Use the `colorize` function for color."
+        result, changes = strategy.process(text, corrector)
+        assert "`colorize`" in result, f"Inline code was wrongly converted: {result}"
+        assert "colour" in result  # Prose should be converted
+
+    def test_double_backtick_code_not_converted(self, strategy, corrector):
+        """Double-backtick code spans should not be converted."""
+        text = "Use ``organization.color`` for the color."
+        result, changes = strategy.process(text, corrector)
+        assert "``organization.color``" in result
+        assert "colour" in result  # Prose should be converted
+
+    def test_inline_code_with_backtick_inside(self, strategy, corrector):
+        """Code span containing backticks uses double backticks."""
+        text = "Use `` `behavior` `` for color."
+        result, changes = strategy.process(text, corrector)
+        assert "behavior" in result  # Inside code span - preserved
+        assert "colour" in result  # Prose converted
+
+    # === FENCED CODE BLOCKS ===
+
+    def test_fenced_code_block_not_converted(self, strategy, corrector):
+        """Fenced code blocks should not be converted."""
+        text = """Here is some color:
+
+```python
+color = "favorite"
+organization = True
+```
+
+The color is nice."""
+        result, changes = strategy.process(text, corrector)
+        assert 'color = "favorite"' in result, f"Code block was converted: {result}"
+        assert "organization = True" in result
+        # Prose before and after should be converted
+        assert result.startswith("Here is some colour:")
+        assert result.endswith("The colour is nice.")
+
+    def test_fenced_code_block_with_tilde(self, strategy, corrector):
+        """Tilde-fenced code blocks should not be converted."""
+        text = """Example:
+
+~~~
+colorize(behavior)
+~~~
+
+The color works."""
+        result, changes = strategy.process(text, corrector)
+        assert "colorize(behavior)" in result
+        assert "colour works" in result
+
+    def test_code_block_without_language(self, strategy, corrector):
+        """Code blocks without language specifier should be preserved."""
+        text = """```
+color = behavior
+```"""
+        result, changes = strategy.process(text, corrector)
+        assert "color = behavior" in result
+
+    # === PROSE CONVERSION ===
+
+    def test_prose_converted(self, strategy, corrector):
+        """Regular prose should be converted."""
+        text = "The color of the organization was analyzed."
+        result, changes = strategy.process(text, corrector)
+        assert "colour" in result
+        assert "organisation" in result
+        assert "analysed" in result
+
+    def test_headings_converted(self, strategy, corrector):
+        """Markdown headings should be converted."""
+        text = "# Color Organization\n\nThe behavior is favorable."
+        result, changes = strategy.process(text, corrector)
+        assert "# Colour Organisation" in result
+        assert "behaviour" in result
+        assert "favourable" in result
+
+    # === EDGE CASES ===
+
+    def test_unclosed_inline_code(self, strategy, corrector):
+        """Unclosed backticks should not break processing."""
+        text = "The `color has no closing and behavior."
+        result, changes = strategy.process(text, corrector)
+        # Should handle gracefully - convert the prose
+        assert "behaviour" in result
+
+    def test_unclosed_code_block(self, strategy, corrector):
+        """Unclosed code block should preserve content."""
+        text = """Text before
+
+```python
+color = behavior
+"""
+        result, changes = strategy.process(text, corrector)
+        # Code block content should be preserved
+        assert "color = behavior" in result
+
+    def test_empty_code_span(self, strategy, corrector):
+        """Empty code span should not break processing."""
+        text = "The `` empty and color."
+        result, changes = strategy.process(text, corrector)
+        assert "colour" in result
+
+    def test_mixed_content(self, strategy, corrector):
+        """Complex markdown with mixed content."""
+        text = """# Color Guide
+
+The `colorize` function handles color.
+
+```python
+def colorize(text):
+    return text.upper()
+```
+
+Use `organize` for organization."""
+        result, changes = strategy.process(text, corrector)
+        assert "# Colour Guide" in result
+        assert "`colorize`" in result  # Preserved
+        assert "handles colour" in result  # Converted
+        assert "def colorize(text):" in result  # Preserved in code block
+        assert "`organize`" in result  # Preserved
+        assert "for organisation" in result  # Converted
+
+    # === INLINE TRIPLE BACKTICKS (not fenced blocks) ===
+
+    def test_inline_triple_backticks_not_mistaken_for_fence(self, strategy, corrector):
+        """Triple backticks inline should be treated as inline code, not fence."""
+        text = "Use ```colorize``` for the color value."
+        result, changes = strategy.process(text, corrector)
+        assert "colorize" in result  # Preserved in inline code
+        assert "colour value" in result  # Prose converted
+
+    def test_inline_triple_backticks_mid_line(self, strategy, corrector):
+        """Triple backticks mid-line are inline code, not fence."""
+        text = "The function ```organization.color``` returns color."
+        result, changes = strategy.process(text, corrector)
+        assert "organization.color" in result  # Preserved
+        assert "returns colour" in result  # Converted
+
+    # === VARIABLE-LENGTH FENCES ===
+
+    def test_four_backtick_fence(self, strategy, corrector):
+        """Four-backtick fence should work and allow triple backticks inside."""
+        text = """````markdown
+Here is ```color``` in a code block
+````
+
+The color is nice."""
+        result, changes = strategy.process(text, corrector)
+        assert "```color```" in result  # Preserved inside fence
+        assert "colour is nice" in result  # Prose converted
+
+    def test_five_tilde_fence(self, strategy, corrector):
+        """Five-tilde fence should match correctly."""
+        text = """~~~~~
+colorize(behavior)
+~~~~~
+
+The color works."""
+        result, changes = strategy.process(text, corrector)
+        assert "colorize(behavior)" in result  # Preserved
+        assert "colour works" in result  # Converted
+
+    # === INDENTED CLOSING FENCES ===
+
+    def test_indented_closing_fence(self, strategy, corrector):
+        """Closing fence with up to 3 spaces indentation should be recognized."""
+        text = """```
+color = behavior
+   ```
+
+The color is nice."""
+        result, changes = strategy.process(text, corrector)
+        assert "color = behavior" in result  # Preserved
+        assert "colour is nice" in result  # Converted
+
+    def test_closing_fence_two_spaces(self, strategy, corrector):
+        """Closing fence with 2 spaces should work."""
+        text = """```python
+organization = True
+  ```
+
+Check the color."""
+        result, changes = strategy.process(text, corrector)
+        assert "organization = True" in result  # Preserved
+        assert "colour" in result  # Converted
+
+    # === INDENTED CODE BLOCKS ===
+
+    def test_indented_code_block_four_spaces(self, strategy, corrector):
+        """Four-space indented code blocks should be preserved."""
+        text = """Here is code:
+
+    color = "favorite"
+    organization = True
+
+The color is nice."""
+        result, changes = strategy.process(text, corrector)
+        assert '    color = "favorite"' in result  # Preserved
+        assert "    organization = True" in result  # Preserved
+        assert "colour is nice" in result  # Prose converted
+
+    def test_indented_code_block_tab(self, strategy, corrector):
+        """Tab-indented code blocks should be preserved."""
+        text = "Here is code:\n\n\tcolor = behavior\n\nThe color works."
+        result, changes = strategy.process(text, corrector)
+        assert "\tcolor = behavior" in result  # Preserved
+        assert "colour works" in result  # Converted
+
+    def test_indented_block_with_blank_lines(self, strategy, corrector):
+        """Indented blocks with blank lines should stay together."""
+        text = """Code example:
+
+    first_color = True
+
+    second_color = False
+
+Normal color text."""
+        result, changes = strategy.process(text, corrector)
+        assert "first_color = True" in result  # Preserved
+        assert "second_color = False" in result  # Preserved
+        assert "Normal colour text" in result  # Converted
+
+
+class TestMarkdownStrategyMapping:
+    """Test that markdown file extensions map to MarkdownStrategy."""
+
+    def test_md_maps_to_markdown_strategy(self):
+        """The .md extension should use MarkdownStrategy."""
+        from britfix_core import get_file_strategy, MarkdownStrategy
+        strategy = get_file_strategy('.md')
+        assert isinstance(strategy, MarkdownStrategy)
+
+    def test_markdown_extension_maps_correctly(self):
+        """The .markdown extension should use MarkdownStrategy."""
+        from britfix_core import get_file_strategy, MarkdownStrategy
+        strategy = get_file_strategy('.markdown')
+        assert isinstance(strategy, MarkdownStrategy)
+
+    def test_mdx_maps_to_markdown_strategy(self):
+        """The .mdx extension should use MarkdownStrategy."""
+        from britfix_core import get_file_strategy, MarkdownStrategy
+        strategy = get_file_strategy('.mdx')
+        assert isinstance(strategy, MarkdownStrategy)
+
+    def test_txt_does_not_use_markdown_strategy(self):
+        """The .txt extension should NOT use MarkdownStrategy."""
+        from britfix_core import get_file_strategy, MarkdownStrategy
+        strategy = get_file_strategy('.txt')
+        assert not isinstance(strategy, MarkdownStrategy)
 
 
 class TestLanguageSpecificComments:
