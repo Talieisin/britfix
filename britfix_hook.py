@@ -63,6 +63,47 @@ _CONFIG = load_config()
 SUPPORTED_EXTENSIONS = load_supported_extensions(_CONFIG)
 
 
+def read_hook_input(stream=sys.stdin) -> dict:
+    """
+    Read a single JSON payload from stdin without waiting for EOF.
+    Claude keeps the pipe open in some cases (cancels/timeouts), so we need to
+    stop reading as soon as one well-formed object has been received.
+    """
+    decoder = json.JSONDecoder()
+    buffer = ""
+    encoding = getattr(stream, "encoding", "utf-8") or "utf-8"
+    binary_stream = getattr(stream, "buffer", None)
+
+    if binary_stream is not None:
+        read_fn = getattr(binary_stream, "read1", None) or binary_stream.read
+
+        def _read_chunk():
+            chunk = read_fn(4096)
+            return chunk.decode(encoding, errors="replace") if chunk else ""
+    else:
+        def _read_chunk():
+            return stream.read(4096)
+
+    while True:
+        chunk = _read_chunk()
+        if not chunk:
+            if buffer.strip():
+                raise json.JSONDecodeError("Incomplete JSON input", buffer, len(buffer))
+            return {}
+
+        buffer += chunk
+        buffer = buffer.lstrip()
+        if not buffer:
+            continue
+
+        try:
+            hook_input, _ = decoder.raw_decode(buffer)
+            return hook_input
+        except json.JSONDecodeError:
+            # Need more data - keep reading
+            continue
+
+
 def run_britfix(file_path: str) -> tuple[bool, str]:
     """
     Run britfix on a file.
@@ -136,8 +177,9 @@ def process_posttooluse(hook_input: dict) -> dict:
 
 
 def main():
+    hook_input = {}
     try:
-        hook_input = json.load(sys.stdin)
+        hook_input = read_hook_input()
         hook_event = hook_input.get('hook_event_name', '')
         
         if hook_event == 'PostToolUse':
@@ -151,7 +193,7 @@ def main():
     except Exception as e:
         log(f"[Spell Hook] Fatal error: {e}")
         try:
-            print(json.dumps(hook_input))
+            print(json.dumps(hook_input if hook_input else {}))
         except:
             print("{}")
         return 0
