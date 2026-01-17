@@ -354,6 +354,35 @@ Normal color text."""
         assert "second_color = False" in result  # Preserved
         assert "Normal colour text" in result  # Converted
 
+    def test_tilde_not_at_line_start_no_infinite_loop(self, strategy, corrector):
+        """Tilde used as approximation symbol (not at line start) should not cause infinite loop.
+
+        Regression test for bug where '~7 days' caused 100% CPU infinite loop.
+        """
+        import signal
+
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Infinite loop detected!")
+
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(2)  # 2 second timeout
+
+        try:
+            text = "Delta links expire after ~7 days."
+            result, changes = strategy.process(text, corrector)
+            assert result == text  # No spelling changes expected
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+    def test_tilde_in_prose_converts_surrounding_text(self, strategy, corrector):
+        """Text around tildes should still be converted."""
+        text = "The color is ~7 hours or analyzed."
+        result, changes = strategy.process(text, corrector)
+        assert "colour" in result
+        assert "~7" in result
+        assert "analysed" in result
+
 
 class TestMarkdownStrategyMapping:
     """Test that markdown file extensions map to MarkdownStrategy."""

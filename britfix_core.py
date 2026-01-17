@@ -356,7 +356,13 @@ class MarkdownStrategy(FileProcessingStrategy):
                 for word, count in changes.items():
                     total_changes[word] += count
 
-            i = next_code
+            # If we're at a delimiter that wasn't handled as a code block
+            # (e.g., tilde not at line start like "~7 days"), just add it and advance
+            if next_code == i:
+                result.append(content[i])
+                i += 1
+            else:
+                i = next_code
 
         return ''.join(result), dict(total_changes)
 
