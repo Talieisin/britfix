@@ -17,6 +17,10 @@
       "description": "HTML/XML - skip tags",
       "extensions": [".html", ".htm", ".xml"]
     },
+    "css": {
+      "description": "CSS/SCSS/SASS/LESS - only convert comments",
+      "extensions": [".css", ".scss", ".sass", ".less"]
+    },
     "json": {
       "description": "JSON - only convert string values",
       "extensions": [".json"]
