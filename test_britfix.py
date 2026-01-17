@@ -7,6 +7,8 @@ from britfix_core import (
     SpellingCorrector,
     load_spelling_mappings,
     CodeStrategy,
+    CssStrategy,
+    HTMLStrategy,
     PlainTextStrategy,
     MarkdownStrategy,
     is_code_file,
@@ -517,6 +519,340 @@ class TestConfigValidation:
         """ConfigError should be importable."""
         from britfix_core import ConfigError
         assert issubclass(ConfigError, Exception)
+
+
+class TestCssStrategy:
+    """CssStrategy should only convert text in comments, never CSS properties/values."""
+
+    @pytest.fixture
+    def strategy(self):
+        return CssStrategy()
+
+    # === SHOULD NOT CONVERT (CSS properties and values) ===
+
+    def test_color_property_not_converted(self, strategy, corrector):
+        """CSS 'color' property must NOT be converted."""
+        css = "body { color: #666; }"
+        result, changes = strategy.process(css, corrector)
+        assert "color:" in result, f"color property was wrongly converted: {result}"
+        assert len(changes) == 0
+
+    def test_text_align_center_not_converted(self, strategy, corrector):
+        """'center' in text-align must NOT become 'centre'."""
+        css = ".box { text-align: center; }"
+        result, changes = strategy.process(css, corrector)
+        assert "center" in result, f"center value was wrongly converted: {result}"
+        assert "centre" not in result
+
+    def test_justify_content_center_not_converted(self, strategy, corrector):
+        """'center' in justify-content must NOT be converted."""
+        css = ".flex { justify-content: center; }"
+        result, changes = strategy.process(css, corrector)
+        assert "center" in result
+        assert "centre" not in result
+
+    def test_scss_variable_not_converted(self, strategy, corrector):
+        """SCSS variable names should NOT be converted."""
+        scss = "$favorite-color: red;"
+        result, changes = strategy.process(scss, corrector)
+        assert "$favorite-color" in result
+
+    def test_css_custom_property_not_converted(self, strategy, corrector):
+        """CSS custom properties should NOT be converted."""
+        css = ":root { --favorite-color: red; }"
+        result, changes = strategy.process(css, corrector)
+        assert "--favorite-color" in result
+
+    def test_selector_not_converted(self, strategy, corrector):
+        """CSS selectors should NOT be converted."""
+        css = ".organization-panel { display: flex; }"
+        result, changes = strategy.process(css, corrector)
+        assert ".organization-panel" in result
+
+    # === SHOULD CONVERT (comments only) ===
+
+    def test_block_comment_converted(self, strategy, corrector):
+        """Block comment prose should be converted."""
+        css = "/* This color is gray */"
+        result, changes = strategy.process(css, corrector)
+        assert "colour" in result, f"Comment not converted: {result}"
+        assert "grey" in result
+
+    def test_line_comment_converted(self, strategy, corrector):
+        """SCSS/LESS line comment should be converted."""
+        scss = "// This color is for the organization"
+        result, changes = strategy.process(scss, corrector)
+        assert "colour" in result
+        assert "organisation" in result
+
+    def test_multiline_block_comment_converted(self, strategy, corrector):
+        """Multi-line block comment should be converted."""
+        css = """/*
+         * The color scheme favors organization.
+         * This behavior is favorable.
+         */"""
+        result, changes = strategy.process(css, corrector)
+        assert "colour" in result
+        assert "favours" in result
+        assert "organisation" in result
+        assert "behaviour" in result
+        assert "favourable" in result
+
+    def test_mixed_css_and_comments(self, strategy, corrector):
+        """CSS with mixed comments and properties."""
+        css = """/* Set the favorite color */
+.panel {
+    color: blue;  /* The color value */
+    text-align: center;
+}"""
+        result, changes = strategy.process(css, corrector)
+        # Comments should be converted
+        assert "favourite colour" in result
+        assert "colour value" in result
+        # Properties should NOT be converted
+        assert "color: blue" in result
+        assert "text-align: center" in result
+        assert "centre" not in result
+
+    # === EDGE CASES ===
+
+    def test_quoted_in_comment_not_converted(self, strategy, corrector):
+        """Quoted text inside comments should be preserved."""
+        css = "/* The 'colorScheme' variable controls color */"
+        result, changes = strategy.process(css, corrector)
+        assert "'colorScheme'" in result
+        assert "colour" in result  # Unquoted prose converted
+
+    def test_string_content_property_not_converted(self, strategy, corrector):
+        """CSS content property strings should NOT be converted."""
+        css = '.icon::before { content: "favorite color"; }'
+        result, changes = strategy.process(css, corrector)
+        assert '"favorite color"' in result
+
+    # === URL HANDLING (// must not be treated as comment) ===
+
+    def test_protocol_relative_url_not_converted(self, strategy, corrector):
+        """Protocol-relative URLs (//example.com) must NOT be treated as comments."""
+        css = ".bg { background: url(//cdn.example.com/color-picker.png); }"
+        result, changes = strategy.process(css, corrector)
+        assert "//cdn.example.com/color-picker.png" in result
+        assert "colour" not in result  # No conversion should happen
+
+    def test_http_url_not_converted(self, strategy, corrector):
+        """HTTP URLs must NOT have // treated as comments."""
+        css = '@import url(http://fonts.example.com/css?family=ColorFont);'
+        result, changes = strategy.process(css, corrector)
+        assert "http://fonts.example.com" in result
+        assert "ColorFont" in result  # URL path should be unchanged
+
+    def test_https_url_not_converted(self, strategy, corrector):
+        """HTTPS URLs must NOT have // treated as comments."""
+        css = ".icon { background-image: url(https://example.com/organization/logo.png); }"
+        result, changes = strategy.process(css, corrector)
+        assert "https://example.com/organization/logo.png" in result
+        assert "organisation" not in result
+
+    def test_quoted_url_with_protocol_not_converted(self, strategy, corrector):
+        """Quoted URLs with protocols must be preserved."""
+        css = '.bg { background: url("https://example.com/color.png"); }'
+        result, changes = strategy.process(css, corrector)
+        assert '"https://example.com/color.png"' in result
+
+    def test_real_line_comment_after_semicolon(self, strategy, corrector):
+        """Real // comment after ; should still be converted."""
+        scss = ".box { color: red; } // This is a real color comment"
+        result, changes = strategy.process(scss, corrector)
+        assert "colour comment" in result  # Comment should be converted
+        assert "color: red" in result  # Property should NOT be converted
+
+    def test_real_line_comment_at_start_of_line(self, strategy, corrector):
+        """// at start of line is a real comment."""
+        scss = "// The favorite color\n.box { color: red; }"
+        result, changes = strategy.process(scss, corrector)
+        assert "favourite colour" in result  # Comment converted
+        assert "color: red" in result  # Property preserved
+
+
+class TestHTMLStrategyStyleScript:
+    """HTMLStrategy should preserve content inside <style> and <script> tags."""
+
+    @pytest.fixture
+    def strategy(self):
+        return HTMLStrategy()
+
+    # === STYLE TAGS ===
+
+    def test_style_tag_content_preserved(self, strategy, corrector):
+        """CSS inside <style> tags should NOT be converted."""
+        html = "<style>.box { color: red; text-align: center; }</style>"
+        result, changes = strategy.process(html, corrector)
+        assert "color: red" in result
+        assert "text-align: center" in result
+        assert "centre" not in result
+
+    def test_style_tag_with_attributes_preserved(self, strategy, corrector):
+        """<style type='text/css'> should still be preserved."""
+        html = '<style type="text/css">.box { color: blue; }</style>'
+        result, changes = strategy.process(html, corrector)
+        assert "color: blue" in result
+
+    def test_multiple_style_tags_preserved(self, strategy, corrector):
+        """Multiple <style> tags should all be preserved."""
+        html = """<style>.a { color: red; }</style>
+<p>The color is nice</p>
+<style>.b { text-align: center; }</style>"""
+        result, changes = strategy.process(html, corrector)
+        assert "color: red" in result
+        assert "text-align: center" in result
+        assert "centre" not in result
+        # Text content should be converted
+        assert "colour is nice" in result
+
+    # === SCRIPT TAGS ===
+
+    def test_script_tag_content_preserved(self, strategy, corrector):
+        """JavaScript inside <script> tags should NOT be converted."""
+        html = "<script>var color = 'favorite';</script>"
+        result, changes = strategy.process(html, corrector)
+        assert "var color = 'favorite'" in result
+        assert "colour" not in result
+
+    def test_script_tag_with_attributes_preserved(self, strategy, corrector):
+        """<script type='text/javascript'> should still be preserved."""
+        html = '<script type="text/javascript">let organization = true;</script>'
+        result, changes = strategy.process(html, corrector)
+        assert "let organization = true" in result
+
+    def test_multiple_script_tags_preserved(self, strategy, corrector):
+        """Multiple <script> tags should all be preserved."""
+        html = """<script>var a = 'color';</script>
+<p>The color is nice</p>
+<script>var b = 'organization';</script>"""
+        result, changes = strategy.process(html, corrector)
+        assert "var a = 'color'" in result
+        assert "var b = 'organization'" in result
+        # Text content should be converted
+        assert "colour is nice" in result
+
+    # === TEXT CONTENT STILL CONVERTS ===
+
+    def test_text_content_converted(self, strategy, corrector):
+        """Regular text content should still be converted."""
+        html = "<p>The color of the organization is favorable.</p>"
+        result, changes = strategy.process(html, corrector)
+        assert "colour" in result
+        assert "organisation" in result
+        assert "favourable" in result
+
+    def test_mixed_style_script_and_text(self, strategy, corrector):
+        """Complex HTML with style, script, and text."""
+        html = """<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        .container { color: blue; text-align: center; }
+    </style>
+    <script>
+        var favoriteColor = 'red';
+        function colorize() { return true; }
+    </script>
+</head>
+<body>
+    <p>The color of the organization is nice.</p>
+</body>
+</html>"""
+        result, changes = strategy.process(html, corrector)
+        # Style preserved
+        assert "color: blue" in result
+        assert "text-align: center" in result
+        # Script preserved
+        assert "favoriteColor" in result
+        assert "colorize" in result
+        # Text content converted
+        assert "colour of the organisation" in result
+
+    # === CASE INSENSITIVITY ===
+
+    def test_uppercase_style_tag_preserved(self, strategy, corrector):
+        """<STYLE> uppercase should be preserved."""
+        html = "<STYLE>.box { color: red; }</STYLE>"
+        result, changes = strategy.process(html, corrector)
+        assert "color: red" in result
+
+    def test_mixed_case_script_tag_preserved(self, strategy, corrector):
+        """<Script> mixed case should be preserved."""
+        html = "<Script>var color = true;</Script>"
+        result, changes = strategy.process(html, corrector)
+        assert "var color = true" in result
+
+    # === SCRIPT CONTAINING STYLE STRING (regression test) ===
+
+    def test_script_with_inline_style_string_preserved(self, strategy, corrector):
+        """Script containing <style> in a string must be fully preserved."""
+        html = '''<script>
+document.write("<style>.box { color: blue; }</style>");
+var favoriteColor = "red";
+</script>
+<p>The color is nice.</p>'''
+        result, changes = strategy.process(html, corrector)
+        # The entire script should be preserved unchanged
+        assert '<style>.box { color: blue; }</style>' in result
+        assert 'favoriteColor' in result
+        # No placeholders should remain
+        assert '\x00' not in result
+        # Text content outside script should still be converted
+        assert "colour is nice" in result
+
+    def test_script_with_style_tag_in_template_literal(self, strategy, corrector):
+        """Script with style tag in template literal must be preserved."""
+        html = '''<script>
+const template = `<style>.color-box { text-align: center; }</style>`;
+</script>'''
+        result, changes = strategy.process(html, corrector)
+        assert '<style>.color-box { text-align: center; }</style>' in result
+        assert '\x00' not in result
+
+
+class TestCssStrategyMapping:
+    """Test that CSS file extensions map to CssStrategy."""
+
+    def test_css_maps_to_css_strategy(self):
+        """The .css extension should use CssStrategy."""
+        from britfix_core import get_file_strategy, CssStrategy
+        strategy = get_file_strategy('.css')
+        assert isinstance(strategy, CssStrategy)
+
+    def test_scss_maps_to_css_strategy(self):
+        """The .scss extension should use CssStrategy."""
+        from britfix_core import get_file_strategy, CssStrategy
+        strategy = get_file_strategy('.scss')
+        assert isinstance(strategy, CssStrategy)
+
+    def test_sass_maps_to_css_strategy(self):
+        """The .sass extension should use CssStrategy."""
+        from britfix_core import get_file_strategy, CssStrategy
+        strategy = get_file_strategy('.sass')
+        assert isinstance(strategy, CssStrategy)
+
+    def test_less_maps_to_css_strategy(self):
+        """The .less extension should use CssStrategy."""
+        from britfix_core import get_file_strategy, CssStrategy
+        strategy = get_file_strategy('.less')
+        assert isinstance(strategy, CssStrategy)
+
+    def test_txt_does_not_use_css_strategy(self):
+        """The .txt extension should NOT use CssStrategy."""
+        from britfix_core import get_file_strategy, CssStrategy, PlainTextStrategy
+        strategy = get_file_strategy('.txt')
+        assert not isinstance(strategy, CssStrategy)
+        assert isinstance(strategy, PlainTextStrategy)
+
+    def test_py_does_not_use_css_strategy(self):
+        """The .py extension should NOT use CssStrategy."""
+        from britfix_core import get_file_strategy, CssStrategy, CodeStrategy
+        strategy = get_file_strategy('.py')
+        assert not isinstance(strategy, CssStrategy)
+        assert isinstance(strategy, CodeStrategy)
 
 
 if __name__ == "__main__":

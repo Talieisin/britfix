@@ -5,6 +5,7 @@ import re
 import json
 import os
 import sys
+import uuid
 from typing import Dict, List, Tuple, Optional, Set
 from collections import defaultdict
 
@@ -393,16 +394,35 @@ class LaTeXStrategy(FileProcessingStrategy):
 
 
 class HTMLStrategy(FileProcessingStrategy):
-    """Process HTML/XML files, preserving tags."""
-    
+    """Process HTML/XML files, preserving tags and content of style/script tags."""
+
     def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
-        # Pattern to match HTML tags and their contents
+        # Step 1: Extract and replace <script>...</script> and <style>...</style> blocks
+        # IMPORTANT: Process <script> FIRST - scripts may contain <style> in string literals
+        # Use UUID-based placeholders to avoid collisions with existing content
+        preserved_blocks = {}
+
+        def preserve_block(match):
+            # Generate a unique placeholder using UUID
+            placeholder = f'\x00{uuid.uuid4().hex}\x00'
+            preserved_blocks[placeholder] = match.group(0)
+            return placeholder
+
+        # Preserve <script>...</script> blocks FIRST (scripts may contain <style> strings)
+        script_pattern = r'<script\b[^>]*>.*?</script>'
+        content = re.sub(script_pattern, preserve_block, content, flags=re.IGNORECASE | re.DOTALL)
+
+        # Then preserve <style>...</style> blocks
+        style_pattern = r'<style\b[^>]*>.*?</style>'
+        content = re.sub(style_pattern, preserve_block, content, flags=re.IGNORECASE | re.DOTALL)
+
+        # Step 2: Process remaining HTML with existing tag-skipping logic
         tag_pattern = r'<[^>]+>'
         segments = re.split(f'({tag_pattern})', content)
-        
+
         corrected_segments = []
         total_changes = defaultdict(int)
-        
+
         for i, segment in enumerate(segments):
             if i % 2 == 0:  # Even indices are text content
                 corrected, changes = corrector.correct_text(segment)
@@ -411,8 +431,193 @@ class HTMLStrategy(FileProcessingStrategy):
                     total_changes[word] += count
             else:  # Odd indices are tags
                 corrected_segments.append(segment)
-                
-        return ''.join(corrected_segments), dict(total_changes)
+
+        result = ''.join(corrected_segments)
+
+        # Step 3: Restore preserved blocks
+        for placeholder, block in preserved_blocks.items():
+            result = result.replace(placeholder, block)
+
+        return result, dict(total_changes)
+
+
+class CssStrategy(FileProcessingStrategy):
+    """
+    Process CSS files - only convert text in comments.
+
+    CSS properties like 'color', 'center', etc. must NOT be converted.
+    Only text inside /* ... */ block comments and // line comments (SCSS/LESS) is converted.
+    """
+
+    def _is_line_comment(self, content: str, pos: int) -> bool:
+        """
+        Check if // at position is a SCSS/LESS line comment vs a URL.
+
+        Returns True if this is a real comment, False if it's part of a URL.
+        A // is a comment if preceded by:
+        - Start of line (with optional whitespace)
+        - Whitespace, {, }, ;
+        It's NOT a comment if:
+        - Preceded by : (URL protocol like http://)
+        - Inside url(...) function
+        """
+        if pos == 0:
+            return True
+
+        # Look backwards to find context
+        j = pos - 1
+
+        # Skip whitespace
+        while j >= 0 and content[j] in ' \t':
+            j -= 1
+
+        if j < 0:
+            return True  # Start of content
+
+        prev_char = content[j]
+
+        # After newline = start of line = comment
+        if prev_char == '\n':
+            return True
+
+        # After these chars, // is a comment
+        if prev_char in '{};':
+            return True
+
+        # After : it's likely a URL (http://, https://, etc.)
+        if prev_char == ':':
+            return False
+
+        # Check if we're inside url(...) - look for 'url(' before this position
+        # Find the most recent '(' and check if preceded by 'url'
+        paren_pos = content.rfind('(', 0, pos)
+        if paren_pos != -1:
+            # Check if there's a closing ')' between paren and current position
+            close_paren = content.find(')', paren_pos, pos)
+            if close_paren == -1:
+                # We're inside parentheses, check if it's url(
+                before_paren = content[:paren_pos].rstrip()
+                if before_paren.lower().endswith('url'):
+                    return False  # Inside url() function
+
+        # Default: treat as comment (SCSS/LESS style)
+        return True
+
+    def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+        total_changes = defaultdict(int)
+        result = []
+        i = 0
+
+        while i < len(content):
+            # Check for block comments /* ... */
+            if content[i:i+2] == '/*':
+                end = content.find('*/', i + 2)
+                if end == -1:
+                    end = len(content)
+                else:
+                    end += 2
+
+                comment = content[i:end]
+                corrected, changes = self._process_comment(comment, corrector)
+                result.append(corrected)
+                for word, count in changes.items():
+                    total_changes[word] += count
+                i = end
+                continue
+
+            # Check for line comments // (SCSS/LESS only - must verify it's not a URL)
+            if content[i:i+2] == '//' and self._is_line_comment(content, i):
+                end = content.find('\n', i)
+                if end == -1:
+                    end = len(content)
+
+                comment = content[i:end]
+                corrected, changes = self._process_comment(comment, corrector)
+                result.append(corrected)
+                for word, count in changes.items():
+                    total_changes[word] += count
+                i = end
+                continue
+
+            # Check for strings - skip them entirely (preserve content properties, etc.)
+            if content[i] in ('"', "'"):
+                quote = content[i]
+                j = i + 1
+                while j < len(content):
+                    if content[j] == '\\':
+                        j += 2
+                        continue
+                    if content[j] == quote:
+                        j += 1
+                        break
+                    j += 1
+
+                result.append(content[i:j])
+                i = j
+                continue
+
+            # Everything else (properties, values, selectors) - keep unchanged
+            result.append(content[i])
+            i += 1
+
+        return ''.join(result), dict(total_changes)
+
+    def _process_comment(self, comment: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+        """
+        Process a CSS comment, converting only unquoted prose.
+        Reuses the pattern from CodeStrategy._convert_unquoted_text.
+        """
+        total_changes = defaultdict(int)
+        result = []
+        i = 0
+
+        while i < len(comment):
+            # Check for quoted text - preserve it
+            if comment[i] in ('"', "'"):
+                quote = comment[i]
+                j = i + 1
+                while j < len(comment) and comment[j] != quote:
+                    if comment[j] == '\\':
+                        j += 2
+                        continue
+                    j += 1
+                if j < len(comment):
+                    j += 1
+
+                result.append(comment[i:j])
+                i = j
+                continue
+
+            # Check for backtick code spans - preserve them
+            if comment[i] == '`':
+                j = i + 1
+                while j < len(comment) and comment[j] != '`':
+                    j += 1
+                if j < len(comment):
+                    j += 1
+
+                result.append(comment[i:j])
+                i = j
+                continue
+
+            # Find the next quote or end
+            next_quote = len(comment)
+            for q in ('"', "'", '`'):
+                pos = comment.find(q, i)
+                if pos != -1 and pos < next_quote:
+                    next_quote = pos
+
+            # Process unquoted segment
+            segment = comment[i:next_quote]
+            if segment:
+                corrected, changes = corrector.correct_text(segment)
+                result.append(corrected)
+                for word, count in changes.items():
+                    total_changes[word] += count
+
+            i = next_quote
+
+        return ''.join(result), dict(total_changes)
 
 
 class JSONStrategy(FileProcessingStrategy):
@@ -656,6 +861,7 @@ _STRATEGY_INSTANCES = {
     'markdown': MarkdownStrategy(),
     'latex': LaTeXStrategy(),
     'html': HTMLStrategy(),
+    'css': CssStrategy(),
     'json': JSONStrategy(),
     'code': CodeStrategy(),
 }

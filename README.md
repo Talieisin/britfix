@@ -59,7 +59,8 @@ Different file types are handled by different strategies, configured in `config.
 | **text** | `.txt` | Convert everything |
 | **markdown** | `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx` | Preserve code spans and code blocks |
 | **latex** | `.tex` | Skip LaTeX commands and math |
-| **html** | `.html`, `.htm`, `.xml` | Skip HTML tags |
+| **html** | `.html`, `.htm`, `.xml` | Skip HTML tags and `<style>`/`<script>` content |
+| **css** | `.css`, `.scss`, `.sass`, `.less` | Only convert comments |
 | **json** | `.json` | Only convert string values |
 | **code** | `.py`, `.js`, `.ts`, etc. | Only convert comments and docstrings |
 
