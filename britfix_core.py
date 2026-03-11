@@ -187,17 +187,27 @@ class FileProcessingStrategy:
         offset = 0
         for start, end, original, replacement in all_replacements:
             adj_start = start + offset
+            adj_end_replaced = adj_start + len(replacement)
+            # Character after the original span in the source content
+            char_after_original = content[end:end + 1]
+
+            # Check whether the replacement appears here and is followed
+            # by the same boundary as in the original content.
+            if corrected[adj_start:adj_end_replaced] == replacement:
+                char_after_candidate = corrected[adj_end_replaced:adj_end_replaced + 1]
+                if char_after_candidate == char_after_original:
+                    safe.append((start, end, original, replacement))
+                    offset += len(replacement) - len(original)
+                    continue
+
+            # If the above didn't confirm an applied replacement, check if
+            # the original text is still present unchanged at this position.
             adj_end_original = adj_start + len(original)
-            # Check for original text first — strategy left it unchanged
             if corrected[adj_start:adj_end_original] == original:
                 # Not applied by strategy, no offset change
                 continue
-            # Strategy changed this region — verify it's the expected replacement
-            adj_end_replaced = adj_start + len(replacement)
-            if corrected[adj_start:adj_end_replaced] == replacement:
-                safe.append((start, end, original, replacement))
-                offset += len(replacement) - len(original)
-            # else: unexpected state, skip conservatively
+
+            # Unexpected/misaligned state, skip conservatively
         return safe
 
 

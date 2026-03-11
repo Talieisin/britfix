@@ -1356,6 +1356,23 @@ class TestFindSafeReplacements:
         assert len(safe) == 1
         assert safe[0][2] == 'distill'
 
+    def test_code_strategy_longer_replacement_catalog(self, corrector):
+        """CodeStrategy: longer replacement (catalog->catalogue) only in comment."""
+        code = '# catalog\nname = "catalog"\n'
+        strategy = CodeStrategy()
+        safe = strategy.find_safe_replacements(code, corrector)
+        originals = [r[2] for r in safe]
+        assert originals == ['catalog']
+        assert safe[0][0] == 2
+
+    def test_code_strategy_longer_replacement_program(self, corrector):
+        """CodeStrategy: program->programme only in comment, not string."""
+        code = '# program\nname = "program"\n'
+        strategy = CodeStrategy()
+        safe = strategy.find_safe_replacements(code, corrector)
+        assert len(safe) == 1
+        assert safe[0][2] == 'program'
+
 
 class TestInteractiveStrategyInvariant:
     """Approve-all via find_safe_replacements + apply_replacements should equal process()."""
@@ -1368,6 +1385,7 @@ class TestInteractiveStrategyInvariant:
     @pytest.mark.parametrize("strategy,content", [
         (CodeStrategy(), '# The color and behavior\nname = "color"\n'),
         (CodeStrategy(), '# appall and distill\nname = "appall"\n'),
+        (CodeStrategy(), '# catalog and program\nname = "catalog"\n'),
         (MarkdownStrategy(), 'The color is nice\n\n```\ncolor = x\n```\n'),
         (CssStrategy(), '/* color behavior */\n.x { color: red; }\n'),
         (HTMLStrategy(), '<p>color behavior</p><script>var color=1;</script>'),
