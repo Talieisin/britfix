@@ -50,6 +50,11 @@ from britfix_core import (
     SpellingCorrector,
     load_spelling_mappings,
     get_file_strategy,
+    get_file_strategy_name,
+    discover_ignore_words,
+    get_corrector_for_strategy,
+    get_user_ignore_path,
+    parse_britfixignore,
 )
 
 
@@ -325,9 +330,6 @@ Examples:
         logging.error("No spelling dictionary found or dictionary is empty")
         sys.exit(1)
     
-    # Create corrector
-    corrector = SpellingCorrector(american_to_british)
-    
     # Handle stdin input or file patterns
     if not args.input:
         # Check if stdin has data
@@ -337,12 +339,27 @@ Examples:
         
         # Process stdin (treated as plain text)
         content = sys.stdin.read()
+
+        # For stdin, use only user-level ignore with "text" strategy
+        stdin_global = set()
+        stdin_scoped: dict = {}
+        user_ignore_path = get_user_ignore_path()
+        if user_ignore_path and user_ignore_path.is_file():
+            try:
+                user_content = user_ignore_path.read_text(encoding='utf-8')
+                stdin_global, stdin_scoped = parse_britfixignore(user_content)
+            except (OSError, UnicodeDecodeError):
+                pass
+        stdin_corrector = get_corrector_for_strategy(
+            american_to_british, stdin_global, stdin_scoped, 'text'
+        )
+
         if args.interactive:
-            corrected_content, changes = process_stdin_interactive(content, corrector)
+            corrected_content, changes = process_stdin_interactive(content, stdin_corrector)
         else:
             # Non-interactive stdin processing
             strategy = get_file_strategy('.txt')  # Default to text strategy
-            corrected_content, changes = strategy.process(content, corrector)
+            corrected_content, changes = strategy.process(content, stdin_corrector)
         
         # Output result to stdout
         if not args.dry_run:
@@ -379,14 +396,21 @@ Examples:
             # Get the appropriate processing strategy
             ext = os.path.splitext(filepath)[1].lower()
             strategy = get_file_strategy(ext)
+            strategy_name = get_file_strategy_name(ext)
+
+            # Discover ignore words for this file (cached by directory)
+            file_global, file_scoped = discover_ignore_words(filepath)
+            file_corrector = get_corrector_for_strategy(
+                american_to_british, file_global, file_scoped, strategy_name
+            )
 
             # Process the file
             if args.interactive:
-                corrected_content, file_changes = process_file_interactive(filepath, corrector)
+                corrected_content, file_changes = process_file_interactive(filepath, file_corrector)
             else:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
-                corrected_content, file_changes = strategy.process(content, corrector)
+                corrected_content, file_changes = strategy.process(content, file_corrector)
             
             if file_changes:
                 processed_files.append((filepath, file_changes))

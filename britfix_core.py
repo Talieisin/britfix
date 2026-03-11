@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import uuid
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Set
 from collections import defaultdict
 
@@ -872,9 +873,12 @@ _STRATEGY_INSTANCES = {
     'code': CodeStrategy(),
 }
 
-# Build file extension to strategy mapping from config
-def _build_file_strategies() -> Dict[str, FileProcessingStrategy]:
-    """Build FILE_STRATEGIES from config.json."""
+# Build unified file extension to (strategy_name, strategy_instance) mapping from config
+def _build_file_strategies() -> Dict[str, Tuple[str, FileProcessingStrategy]]:
+    """Build FILE_STRATEGIES from config.json.
+
+    Returns a map of {ext: (strategy_name, strategy_instance)}.
+    """
     strategies = {}
     config_strategies = _CONFIG['strategies']
 
@@ -882,7 +886,7 @@ def _build_file_strategies() -> Dict[str, FileProcessingStrategy]:
         strategy_instance = _STRATEGY_INSTANCES.get(strategy_name)
         if strategy_instance:
             for ext in strategy_config['extensions']:
-                strategies[ext.lower()] = strategy_instance
+                strategies[ext.lower()] = (strategy_name, strategy_instance)
 
     return strategies
 
@@ -900,9 +904,210 @@ CODE_EXTENSIONS = _build_code_extensions()
 
 def get_file_strategy(file_extension: str) -> FileProcessingStrategy:
     """Get the appropriate processing strategy for a file type."""
-    return FILE_STRATEGIES.get(file_extension.lower(), PlainTextStrategy())
+    entry = FILE_STRATEGIES.get(file_extension.lower())
+    if entry:
+        return entry[1]
+    return PlainTextStrategy()
+
+
+def get_file_strategy_name(file_extension: str) -> str:
+    """Get the strategy name for a file extension, defaulting to 'text'."""
+    entry = FILE_STRATEGIES.get(file_extension.lower())
+    if entry:
+        return entry[0]
+    return 'text'
 
 
 def is_code_file(file_extension: str) -> bool:
     """Check if file extension is a code file."""
     return file_extension.lower() in CODE_EXTENSIONS
+
+
+# --- .britfixignore support ---
+
+def parse_britfixignore(content: str) -> Tuple[Set[str], Dict[str, Set[str]]]:
+    """Parse a .britfixignore file.
+
+    Returns (global_ignores, scoped_ignores) where scoped_ignores maps
+    strategy name -> set of words. Words are lowercased. Unknown strategy
+    names produce a warning on stderr and are skipped.
+    """
+    valid_strategies = set(_CONFIG['strategies'].keys())
+    global_ignores: Set[str] = set()
+    scoped_ignores: Dict[str, Set[str]] = {}
+
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+
+        if ':' in line:
+            strategy_name, _, word = line.partition(':')
+            strategy_name = strategy_name.strip().lower()
+            word = word.strip().lower()
+            if not word:
+                continue
+            if strategy_name not in valid_strategies:
+                safe_name = strategy_name.encode('unicode_escape').decode('ascii')
+                print(f"britfix: unknown strategy '{safe_name}' in .britfixignore, skipping", file=sys.stderr)
+                continue
+            if strategy_name not in scoped_ignores:
+                scoped_ignores[strategy_name] = set()
+            scoped_ignores[strategy_name].add(word)
+        else:
+            global_ignores.add(line.lower())
+
+    return global_ignores, scoped_ignores
+
+
+def get_user_ignore_path() -> Optional[Path]:
+    """Get the user-level britfix ignore config path.
+
+    Windows: %APPDATA%/britfix/ignore
+    Others: $XDG_CONFIG_HOME/britfix/ignore (default ~/.config/britfix/ignore)
+    """
+    if os.name == 'nt':
+        appdata = os.environ.get('APPDATA', '')
+        if appdata:
+            return Path(appdata) / 'britfix' / 'ignore'
+        return None
+    else:
+        xdg = os.environ.get('XDG_CONFIG_HOME', '')
+        if xdg:
+            base = Path(xdg)
+        else:
+            base = Path.home() / '.config'
+        return base / 'britfix' / 'ignore'
+
+
+# Cache for ignore lookups by directory path
+_ignore_cache: Dict[str, Tuple[Set[str], Dict[str, Set[str]]]] = {}
+
+
+def _merge_ignores(
+    base: Tuple[Set[str], Dict[str, Set[str]]],
+    overlay: Tuple[Set[str], Dict[str, Set[str]]],
+) -> Tuple[Set[str], Dict[str, Set[str]]]:
+    """Merge two ignore tuples additively (union)."""
+    merged_global = base[0] | overlay[0]
+    merged_scoped: Dict[str, Set[str]] = {}
+    for key in set(base[1].keys()) | set(overlay[1].keys()):
+        merged_scoped[key] = base[1].get(key, set()) | overlay[1].get(key, set())
+    return merged_global, merged_scoped
+
+
+def discover_ignore_words(file_path: str) -> Tuple[Set[str], Dict[str, Set[str]]]:
+    """Discover .britfixignore words for a given file.
+
+    Walks up from the file's directory to the nearest .git boundary or
+    Path.home(), collects .britfixignore files root->leaf, merges with
+    user config. Results are cached by directory.
+    """
+    resolved = Path(file_path).resolve()
+    file_dir = resolved.parent if resolved.is_file() or not resolved.exists() else resolved
+
+    cache_key = str(file_dir)
+    if cache_key in _ignore_cache:
+        return _ignore_cache[cache_key]
+
+    home = Path.home()
+
+    # Walk up to find boundary
+    boundary = None
+    current = file_dir
+    while True:
+        git_path = current / '.git'
+        if git_path.exists():
+            boundary = current
+            break
+        if current == home:
+            boundary = home
+            break
+        parent = current.parent
+        if parent == current:
+            # Filesystem root
+            boundary = current
+            break
+        current = parent
+
+    # Collect .britfixignore files from boundary down to file_dir
+    # Build the path from boundary to file_dir
+    ignore_files: List[Path] = []
+    try:
+        rel = file_dir.relative_to(boundary)
+        parts = [boundary] + [boundary / Path(*rel.parts[:i+1]) for i in range(len(rel.parts))]
+    except ValueError:
+        parts = [file_dir]
+
+    for d in parts:
+        candidate = d / '.britfixignore'
+        if candidate.is_file():
+            ignore_files.append(candidate)
+
+    # Start with user config
+    result: Tuple[Set[str], Dict[str, Set[str]]] = (set(), {})
+    user_path = get_user_ignore_path()
+    if user_path and user_path.is_file():
+        try:
+            user_content = user_path.read_text(encoding='utf-8')
+            result = parse_britfixignore(user_content)
+        except (OSError, UnicodeDecodeError):
+            pass
+
+    # Merge project ignores root->leaf
+    for ignore_file in ignore_files:
+        try:
+            content = ignore_file.read_text(encoding='utf-8')
+            parsed = parse_britfixignore(content)
+            result = _merge_ignores(result, parsed)
+        except (OSError, UnicodeDecodeError):
+            pass
+
+    _ignore_cache[cache_key] = result
+    return result
+
+
+def filter_dictionary(
+    dictionary: Dict[str, str],
+    global_ignores: Set[str],
+    scoped_ignores: Dict[str, Set[str]],
+    strategy_name: str,
+) -> Dict[str, str]:
+    """Filter a spelling dictionary by removing ignored words.
+
+    global_ignores apply to all strategies. scoped_ignores[strategy_name]
+    applies only to the given strategy. Words are matched case-insensitively.
+    """
+    strategy_ignores = scoped_ignores.get(strategy_name, set())
+    all_ignored = global_ignores | strategy_ignores
+
+    if not all_ignored:
+        return dictionary
+
+    return {k: v for k, v in dictionary.items() if k.lower() not in all_ignored}
+
+
+# Cache for correctors keyed by (dict_id, strategy_name, frozenset(ignored)).
+# Uses id() for the dictionary — safe because the dictionary object is kept alive
+# for the entire CLI run, so the id cannot be reused by a different object.
+_corrector_cache: Dict[Tuple[int, str, frozenset], SpellingCorrector] = {}
+
+
+def get_corrector_for_strategy(
+    base_dictionary: Dict[str, str],
+    global_ignores: Set[str],
+    scoped_ignores: Dict[str, Set[str]],
+    strategy_name: str,
+) -> SpellingCorrector:
+    """Get a (cached) SpellingCorrector with ignored words filtered out."""
+    strategy_ignores = scoped_ignores.get(strategy_name, set())
+    effective_ignored = frozenset(global_ignores | strategy_ignores)
+
+    cache_key = (id(base_dictionary), strategy_name, effective_ignored)
+    if cache_key in _corrector_cache:
+        return _corrector_cache[cache_key]
+
+    filtered = filter_dictionary(base_dictionary, global_ignores, scoped_ignores, strategy_name)
+    corrector = SpellingCorrector(filtered)
+    _corrector_cache[cache_key] = corrector
+    return corrector

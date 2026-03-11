@@ -81,6 +81,57 @@ payload = {'colorScheme': x}    # Dict key - unchanged
 # Use 'colorField' for the API  # Quoted in comment - unchanged
 ```
 
+## Ignoring Words (`.britfixignore`)
+
+Create a `.britfixignore` file to prevent specific words from being converted. This is useful for words like "dialog", "color", or "center" that are conventional American spellings in technical contexts.
+
+### Format
+
+```text
+# Global exceptions (all strategies)
+dialog
+
+# Strategy-scoped exceptions (only apply to that file type)
+code:color
+code:center
+markdown:dialog
+```
+
+- One word per line, `#` comments, blank lines skipped
+- Optional `strategy:` prefix scopes the exception to that strategy only
+- Words use American (source) spelling (e.g. `color` not `colour`)
+- Case-insensitive
+
+### File Discovery
+
+Britfix walks up from the target file, stopping at the first `.git` boundary, the home directory, or the filesystem root (whichever is found first). It collects `.britfixignore` files from that boundary down to the file's directory, merging them additively.
+
+### User-Level Config
+
+A personal ignore file applies to all projects:
+
+- **Linux/macOS**: `~/.config/britfix/ignore` (or `$XDG_CONFIG_HOME/britfix/ignore` if set)
+- **Windows**: `%APPDATA%\britfix\ignore`
+
+### Example
+
+With this `.britfixignore` at your project root:
+```text
+code:color
+code:center
+```
+
+Running britfix on a Python file:
+```python
+# The color is nice   ->  unchanged (code:color exception)
+# The behavior is ok  ->  # The behaviour is ok (not excepted)
+```
+
+Running britfix on a text file:
+```text
+The color is nice  ->  The colour is nice (exception is code-scoped, doesn't apply)
+```
+
 ## Configuration
 
 Edit `config.json` to customise file type handling:
