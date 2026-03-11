@@ -2,7 +2,9 @@
 """
 Tests for britfix - especially CodeStrategy context handling.
 """
+import os
 import pytest
+from pathlib import Path
 from britfix_core import (
     SpellingCorrector,
     load_spelling_mappings,
@@ -12,7 +14,14 @@ from britfix_core import (
     PlainTextStrategy,
     MarkdownStrategy,
     is_code_file,
-    CODE_EXTENSIONS
+    CODE_EXTENSIONS,
+    parse_britfixignore,
+    get_user_ignore_path,
+    discover_ignore_words,
+    filter_dictionary,
+    get_corrector_for_strategy,
+    get_file_strategy_name,
+    _ignore_cache,
 )
 
 
@@ -882,6 +891,396 @@ class TestCssStrategyMapping:
         strategy = get_file_strategy('.py')
         assert not isinstance(strategy, CssStrategy)
         assert isinstance(strategy, CodeStrategy)
+
+
+class TestGetFileStrategyName:
+    """Test get_file_strategy_name returns correct strategy names."""
+
+    def test_python_is_code(self):
+        assert get_file_strategy_name('.py') == 'code'
+
+    def test_md_is_markdown(self):
+        assert get_file_strategy_name('.md') == 'markdown'
+
+    def test_txt_is_text(self):
+        assert get_file_strategy_name('.txt') == 'text'
+
+    def test_css_is_css(self):
+        assert get_file_strategy_name('.css') == 'css'
+
+    def test_unknown_defaults_to_text(self):
+        assert get_file_strategy_name('.xyz') == 'text'
+
+
+class TestBritfixIgnoreParsing:
+    """Test .britfixignore file parsing."""
+
+    def test_empty_file(self):
+        g, s = parse_britfixignore('')
+        assert g == set()
+        assert s == {}
+
+    def test_comments_and_blank_lines(self):
+        content = "# a comment\n\n# another\n"
+        g, s = parse_britfixignore(content)
+        assert g == set()
+        assert s == {}
+
+    def test_global_words(self):
+        content = "color\nbehavior\n"
+        g, s = parse_britfixignore(content)
+        assert g == {'color', 'behavior'}
+        assert s == {}
+
+    def test_scoped_words(self):
+        content = "code:color\nmarkdown:dialog\n"
+        g, s = parse_britfixignore(content)
+        assert g == set()
+        assert s == {'code': {'color'}, 'markdown': {'dialog'}}
+
+    def test_mixed_global_and_scoped(self):
+        content = "color\ncode:dialog\n"
+        g, s = parse_britfixignore(content)
+        assert g == {'color'}
+        assert s == {'code': {'dialog'}}
+
+    def test_whitespace_handling(self):
+        content = "  color  \n  code : dialog  \n"
+        g, s = parse_britfixignore(content)
+        assert 'color' in g
+        assert 'dialog' in s.get('code', set())
+
+    def test_case_insensitivity(self):
+        content = "Color\nCode:Dialog\n"
+        g, s = parse_britfixignore(content)
+        assert 'color' in g
+        assert 'dialog' in s.get('code', set())
+
+    def test_unknown_strategy_warns(self, capsys):
+        content = "bogus:color\n"
+        g, s = parse_britfixignore(content)
+        assert g == set()
+        assert s == {}
+        captured = capsys.readouterr()
+        assert "unknown strategy 'bogus'" in captured.err
+
+    def test_empty_word_after_colon_skipped(self):
+        content = "code:\n"
+        g, s = parse_britfixignore(content)
+        assert g == set()
+        assert s == {}
+
+    def test_multiple_words_same_strategy(self):
+        content = "code:color\ncode:dialog\ncode:center\n"
+        g, s = parse_britfixignore(content)
+        assert s == {'code': {'color', 'dialog', 'center'}}
+
+
+class TestBritfixIgnoreDiscovery:
+    """Test .britfixignore file discovery."""
+
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        """Clear ignore cache before each test."""
+        _ignore_cache.clear()
+        yield
+        _ignore_cache.clear()
+
+    def test_git_root_boundary(self, tmp_path):
+        """Discovery stops at .git directory."""
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('color\n')
+        (tmp_path / 'sub').mkdir()
+        target = tmp_path / 'sub' / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert 'color' in g
+
+    def test_nested_dirs_merge(self, tmp_path):
+        """Nested .britfixignore files merge additively."""
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('color\n')
+        (tmp_path / 'sub').mkdir()
+        (tmp_path / 'sub' / '.britfixignore').write_text('behavior\n')
+        target = tmp_path / 'sub' / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert 'color' in g
+        assert 'behavior' in g
+
+    def test_scoped_merge(self, tmp_path):
+        """Scoped ignores from different levels merge."""
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('code:color\n')
+        (tmp_path / 'sub').mkdir()
+        (tmp_path / 'sub' / '.britfixignore').write_text('code:dialog\n')
+        target = tmp_path / 'sub' / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert s.get('code') == {'color', 'dialog'}
+
+    def test_stops_at_home_dir(self, tmp_path, monkeypatch):
+        """Discovery stops at home directory."""
+        fake_home = tmp_path / 'home'
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, 'home', staticmethod(lambda: fake_home))
+
+        # Put an ignore file ABOVE home — it should not be found
+        (tmp_path / '.britfixignore').write_text('color\n')
+        project = fake_home / 'project'
+        project.mkdir()
+        target = project / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert 'color' not in g
+
+    def test_worktree_git_file(self, tmp_path):
+        """A .git file (worktree) is also a valid boundary."""
+        (tmp_path / '.git').write_text('gitdir: /some/other/path\n')
+        (tmp_path / '.britfixignore').write_text('color\n')
+        target = tmp_path / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert 'color' in g
+
+    def test_user_config_merged(self, tmp_path, monkeypatch):
+        """User config file is merged with project ignores."""
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('color\n')
+
+        user_config_dir = tmp_path / 'user_config' / 'britfix'
+        user_config_dir.mkdir(parents=True)
+        (user_config_dir / 'ignore').write_text('behavior\n')
+        monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'user_config'))
+
+        target = tmp_path / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert 'color' in g
+        assert 'behavior' in g
+
+    def test_caching_by_directory(self, tmp_path):
+        """Same directory should return cached result."""
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('color\n')
+        f1 = tmp_path / 'a.py'
+        f2 = tmp_path / 'b.py'
+        f1.touch()
+        f2.touch()
+
+        r1 = discover_ignore_words(str(f1))
+        r2 = discover_ignore_words(str(f2))
+        # Should be the exact same object (cached)
+        assert r1 is r2
+
+    def test_no_git_outside_home_stops_at_fs_root(self, tmp_path, monkeypatch):
+        """If outside home and no .git, walk up to filesystem root."""
+        # Set home to something unrelated
+        fake_home = tmp_path / 'fakehome'
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, 'home', staticmethod(lambda: fake_home))
+
+        # Create a directory outside of fake home
+        project = tmp_path / 'other' / 'project'
+        project.mkdir(parents=True)
+        (project / '.britfixignore').write_text('color\n')
+        target = project / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert 'color' in g
+
+    def test_invalid_utf8_ignore_file_skipped(self, tmp_path):
+        """Invalid UTF-8 in .britfixignore should be silently skipped."""
+        (tmp_path / '.git').mkdir()
+        # Write raw bytes that are not valid UTF-8
+        (tmp_path / '.britfixignore').write_bytes(b'\xff\xfe invalid utf8\n')
+        target = tmp_path / 'file.py'
+        target.touch()
+
+        # Should not raise, should return empty ignores
+        g, s = discover_ignore_words(str(target))
+        assert isinstance(g, set)
+        assert isinstance(s, dict)
+
+    def test_invalid_utf8_user_config_skipped(self, tmp_path, monkeypatch):
+        """Invalid UTF-8 in user config should be silently skipped."""
+        (tmp_path / '.git').mkdir()
+        user_config_dir = tmp_path / 'user_config' / 'britfix'
+        user_config_dir.mkdir(parents=True)
+        (user_config_dir / 'ignore').write_bytes(b'\x80\x81\x82\n')
+        monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'user_config'))
+
+        target = tmp_path / 'file.py'
+        target.touch()
+
+        g, s = discover_ignore_words(str(target))
+        assert isinstance(g, set)
+
+
+class TestBritfixIgnoreParsingEdgeCases:
+    """Edge cases for .britfixignore parsing."""
+
+    def test_terminal_escape_in_strategy_name_sanitized(self, capsys):
+        """Terminal escape sequences in strategy names should be escaped in warning."""
+        content = "\x1b[31mevil\x1b[0m:color\n"
+        parse_britfixignore(content)
+        captured = capsys.readouterr()
+        # The raw escape should not appear in stderr
+        assert '\x1b[' not in captured.err
+        assert 'unknown strategy' in captured.err
+
+
+class TestFilteredCorrector:
+    """Test dictionary filtering and corrector creation with ignores."""
+
+    @pytest.fixture
+    def dictionary(self):
+        return load_spelling_mappings()
+
+    def test_global_ignore(self, dictionary):
+        filtered = filter_dictionary(dictionary, {'color'}, {}, 'text')
+        assert 'color' not in filtered
+        assert 'behavior' in filtered  # Other words unaffected
+
+    def test_scoped_ignore(self, dictionary):
+        filtered = filter_dictionary(dictionary, set(), {'code': {'color'}}, 'code')
+        assert 'color' not in filtered
+        assert 'behavior' in filtered
+
+    def test_scoped_ignore_different_strategy(self, dictionary):
+        """Scoped ignore for 'code' should NOT apply to 'text'."""
+        filtered = filter_dictionary(dictionary, set(), {'code': {'color'}}, 'text')
+        assert 'color' in filtered  # Not ignored for text strategy
+
+    def test_cross_strategy_isolation(self, dictionary):
+        """Ignoring for one strategy shouldn't affect another."""
+        scoped = {'code': {'color'}, 'markdown': {'behavior'}}
+        code_filtered = filter_dictionary(dictionary, set(), scoped, 'code')
+        md_filtered = filter_dictionary(dictionary, set(), scoped, 'markdown')
+
+        assert 'color' not in code_filtered
+        assert 'behavior' in code_filtered
+        assert 'color' in md_filtered
+        assert 'behavior' not in md_filtered
+
+    def test_case_preservation_with_ignores(self, dictionary):
+        """Corrector with ignores should still preserve case for non-ignored words."""
+        corrector = get_corrector_for_strategy(dictionary, {'color'}, {}, 'text')
+        text = "The Color and Behavior are important."
+        result, changes = corrector.correct_text(text)
+        assert 'Color' in result  # Ignored, unchanged
+        assert 'Behaviour' in result  # Not ignored, converted with case
+        assert 'color' not in changes
+
+    def test_empty_ignores_returns_full_dictionary(self, dictionary):
+        filtered = filter_dictionary(dictionary, set(), {}, 'text')
+        assert filtered == dictionary
+
+    def test_corrector_caching(self, dictionary):
+        """Same inputs should return same corrector instance."""
+        from britfix_core import _corrector_cache
+        _corrector_cache.clear()
+
+        c1 = get_corrector_for_strategy(dictionary, {'color'}, {}, 'text')
+        c2 = get_corrector_for_strategy(dictionary, {'color'}, {}, 'text')
+        assert c1 is c2
+
+
+class TestIgnoreIntegration:
+    """Integration tests combining strategies with ignore support."""
+
+    @pytest.fixture
+    def dictionary(self):
+        return load_spelling_mappings()
+
+    def test_code_strategy_with_scoped_ignore(self, dictionary):
+        """CodeStrategy + scoped ignore should skip specified words in comments."""
+        corrector = get_corrector_for_strategy(
+            dictionary, set(), {'code': {'color'}}, 'code'
+        )
+        strategy = CodeStrategy()
+        code = "# The color and behavior are important"
+        result, changes = strategy.process(code, corrector)
+        assert 'color' in result  # Ignored
+        assert 'behaviour' in result  # Not ignored, converted
+
+    def test_markdown_strategy_with_global_ignore(self, dictionary):
+        """MarkdownStrategy + global ignore should skip specified words."""
+        corrector = get_corrector_for_strategy(
+            dictionary, {'color'}, {}, 'markdown'
+        )
+        strategy = MarkdownStrategy()
+        text = "The color and behavior are nice."
+        result, changes = strategy.process(text, corrector)
+        assert 'color' in result  # Ignored
+        assert 'behaviour' in result  # Converted
+
+    def test_text_strategy_scoped_code_ignore_not_applied(self, dictionary):
+        """A code-scoped ignore should NOT affect text strategy."""
+        corrector = get_corrector_for_strategy(
+            dictionary, set(), {'code': {'color'}}, 'text'
+        )
+        strategy = PlainTextStrategy()
+        text = "The color is nice."
+        result, changes = strategy.process(text, corrector)
+        assert 'colour' in result  # Not ignored for text
+
+    def test_end_to_end_file_ignore(self, tmp_path, dictionary):
+        """Full integration: .britfixignore + file processing."""
+        _ignore_cache.clear()
+
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('code:color\n')
+        py_file = tmp_path / 'test.py'
+        py_file.write_text('# The color is nice\n')
+        txt_file = tmp_path / 'test.txt'
+        txt_file.write_text('The color is nice\n')
+
+        # Python file: color should be ignored (code strategy)
+        g, s = discover_ignore_words(str(py_file))
+        py_corrector = get_corrector_for_strategy(dictionary, g, s, 'code')
+        strategy = CodeStrategy()
+        result, _ = strategy.process(py_file.read_text(), py_corrector)
+        assert 'color' in result
+        assert 'colour' not in result
+
+        # Text file: color should NOT be ignored (text strategy)
+        _ignore_cache.clear()
+        g, s = discover_ignore_words(str(txt_file))
+        txt_corrector = get_corrector_for_strategy(dictionary, g, s, 'text')
+        strategy = PlainTextStrategy()
+        result, _ = strategy.process(txt_file.read_text(), txt_corrector)
+        assert 'colour' in result
+
+
+class TestUserIgnorePath:
+    """Test get_user_ignore_path for different platforms."""
+
+    def test_unix_default(self, monkeypatch):
+        monkeypatch.setattr(os, 'name', 'posix')
+        monkeypatch.delenv('XDG_CONFIG_HOME', raising=False)
+        path = get_user_ignore_path()
+        assert path is not None
+        assert str(path).endswith('.config/britfix/ignore')
+
+    def test_unix_xdg(self, monkeypatch):
+        monkeypatch.setattr(os, 'name', 'posix')
+        monkeypatch.setenv('XDG_CONFIG_HOME', '/custom/config')
+        path = get_user_ignore_path()
+        assert path == Path('/custom/config/britfix/ignore')
+
+    @pytest.mark.skipif(os.name != 'nt', reason="WindowsPath unavailable on non-Windows")
+    def test_windows(self, monkeypatch):
+        monkeypatch.setenv('APPDATA', 'C:\\Users\\test\\AppData\\Roaming')
+        path = get_user_ignore_path()
+        assert str(path).endswith('britfix\\ignore')
 
 
 if __name__ == "__main__":
