@@ -104,7 +104,7 @@ markdown:dialog
 
 ### File Discovery
 
-Britfix walks up from the target file to the nearest `.git` boundary (or home directory), collecting `.britfixignore` files from root to leaf. All found files are merged additively.
+Britfix walks up from the target file, stopping at the first `.git` boundary, the home directory, or the filesystem root (whichever is found first). It collects `.britfixignore` files from that boundary down to the file's directory, merging them additively.
 
 ### User-Level Config
 

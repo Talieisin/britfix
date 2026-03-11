@@ -1087,7 +1087,9 @@ def filter_dictionary(
     return {k: v for k, v in dictionary.items() if k.lower() not in all_ignored}
 
 
-# Cache for correctors keyed by (dict_len, strategy_name, frozenset(ignored))
+# Cache for correctors keyed by (dict_id, strategy_name, frozenset(ignored)).
+# Uses id() for the dictionary — safe because the dictionary object is kept alive
+# for the entire CLI run, so the id cannot be reused by a different object.
 _corrector_cache: Dict[Tuple[int, str, frozenset], SpellingCorrector] = {}
 
 
@@ -1101,7 +1103,7 @@ def get_corrector_for_strategy(
     strategy_ignores = scoped_ignores.get(strategy_name, set())
     effective_ignored = frozenset(global_ignores | strategy_ignores)
 
-    cache_key = (len(base_dictionary), strategy_name, effective_ignored)
+    cache_key = (id(base_dictionary), strategy_name, effective_ignored)
     if cache_key in _corrector_cache:
         return _corrector_cache[cache_key]
 
