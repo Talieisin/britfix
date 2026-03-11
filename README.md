@@ -44,7 +44,7 @@ britfix --input "src/*.py" --dry-run
 ### Options
 
 - `--input`: Input file(s) or pattern(s). If omitted, reads from stdin
-- `--interactive`, `-i`: Interactive approval mode
+- `--interactive`, `-i`: Interactive approval mode (strategy-aware — only suggests changes in regions the strategy considers safe, e.g. comments in code files, prose in markdown). JSON files fall back to non-interactive processing
 - `--dry-run`: Preview changes without modifying files
 - `--no-backup`: Skip backup creation
 - `--recursive`: Process files recursively

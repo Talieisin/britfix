@@ -13,6 +13,7 @@ from britfix_core import (
     HTMLStrategy,
     PlainTextStrategy,
     MarkdownStrategy,
+    JSONStrategy,
     is_code_file,
     CODE_EXTENSIONS,
     parse_britfixignore,
@@ -23,6 +24,7 @@ from britfix_core import (
     get_file_strategy_name,
     _ignore_cache,
 )
+from britfix import apply_replacements
 
 
 @pytest.fixture
@@ -1281,6 +1283,116 @@ class TestUserIgnorePath:
         monkeypatch.setenv('APPDATA', 'C:\\Users\\test\\AppData\\Roaming')
         path = get_user_ignore_path()
         assert str(path).endswith('britfix\\ignore')
+
+
+class TestFindSafeReplacements:
+    """Test find_safe_replacements filters by strategy segmentation."""
+
+    @pytest.fixture
+    def corrector(self):
+        mappings = load_spelling_mappings()
+        return SpellingCorrector(mappings)
+
+    def test_code_strategy_only_comments(self, corrector):
+        """CodeStrategy: 'colour' in comment returned, in string literal not."""
+        code = '# The color is nice\nname = "color"\n'
+        strategy = CodeStrategy()
+        safe = strategy.find_safe_replacements(code, corrector)
+        originals = [r[2] for r in safe]
+        assert 'color' in originals
+        # Only one occurrence (the comment), not the string literal
+        assert len([o for o in originals if o == 'color']) == 1
+
+    def test_markdown_strategy_only_prose(self, corrector):
+        """MarkdownStrategy: 'colour' in prose returned, in code block not."""
+        md = 'The color is nice\n\n```\ncolor = value\n```\n'
+        strategy = MarkdownStrategy()
+        safe = strategy.find_safe_replacements(md, corrector)
+        originals = [r[2] for r in safe]
+        assert 'color' in originals
+        assert len([o for o in originals if o == 'color']) == 1
+
+    def test_css_strategy_only_comments(self, corrector):
+        """CssStrategy: 'colour' in comment returned, in property not."""
+        css = '/* The color is nice */\n.foo { color: red; }\n'
+        strategy = CssStrategy()
+        safe = strategy.find_safe_replacements(css, corrector)
+        originals = [r[2] for r in safe]
+        assert 'color' in originals
+        assert len([o for o in originals if o == 'color']) == 1
+
+    def test_html_strategy_only_text(self, corrector):
+        """HTMLStrategy: 'colour' in text returned, in script not."""
+        html = '<p>The color is nice</p>\n<script>var color = 1;</script>\n'
+        strategy = HTMLStrategy()
+        safe = strategy.find_safe_replacements(html, corrector)
+        originals = [r[2] for r in safe]
+        assert 'color' in originals
+        assert len([o for o in originals if o == 'color']) == 1
+
+    def test_plain_text_all_returned(self, corrector):
+        """PlainTextStrategy: all occurrences returned."""
+        text = 'The color is nice. Another color here.'
+        strategy = PlainTextStrategy()
+        safe = strategy.find_safe_replacements(text, corrector)
+        originals = [r[2] for r in safe]
+        assert originals.count('color') == 2
+
+    def test_code_strategy_shorter_replacement(self, corrector):
+        """CodeStrategy: shorter replacement (appall->appal) only in comment."""
+        code = '# appall\nname = "appall"\n'
+        strategy = CodeStrategy()
+        safe = strategy.find_safe_replacements(code, corrector)
+        originals = [r[2] for r in safe]
+        assert originals == ['appall']
+        # Verify it's from the comment (position 2), not the string literal
+        assert safe[0][0] == 2
+
+    def test_code_strategy_shorter_replacement_distill(self, corrector):
+        """CodeStrategy: distill->distil only in comment, not string."""
+        code = '# distill\nname = "distill"\n'
+        strategy = CodeStrategy()
+        safe = strategy.find_safe_replacements(code, corrector)
+        assert len(safe) == 1
+        assert safe[0][2] == 'distill'
+
+
+class TestInteractiveStrategyInvariant:
+    """Approve-all via find_safe_replacements + apply_replacements should equal process()."""
+
+    @pytest.fixture
+    def corrector(self):
+        mappings = load_spelling_mappings()
+        return SpellingCorrector(mappings)
+
+    @pytest.mark.parametrize("strategy,content", [
+        (CodeStrategy(), '# The color and behavior\nname = "color"\n'),
+        (CodeStrategy(), '# appall and distill\nname = "appall"\n'),
+        (MarkdownStrategy(), 'The color is nice\n\n```\ncolor = x\n```\n'),
+        (CssStrategy(), '/* color behavior */\n.x { color: red; }\n'),
+        (HTMLStrategy(), '<p>color behavior</p><script>var color=1;</script>'),
+        (PlainTextStrategy(), 'The color and behavior are analyzed.'),
+        (PlainTextStrategy(), 'appall and distill and fulfill'),
+    ])
+    def test_approve_all_equals_process(self, corrector, strategy, content):
+        safe = strategy.find_safe_replacements(content, corrector)
+        result_interactive, _ = apply_replacements(content, safe)
+        result_process, _ = strategy.process(content, corrector)
+        assert result_interactive == result_process
+
+
+class TestJsonInteractiveFallback:
+    """JSON files in interactive mode fall back to non-interactive processing."""
+
+    def test_json_not_supports_interactive(self):
+        """JSONStrategy has supports_interactive=False."""
+        strategy = JSONStrategy()
+        assert not strategy.supports_interactive
+
+    def test_other_strategies_support_interactive(self):
+        """Non-JSON strategies have supports_interactive=True."""
+        for strategy_cls in [PlainTextStrategy, MarkdownStrategy, CodeStrategy, CssStrategy, HTMLStrategy]:
+            assert strategy_cls().supports_interactive
 
 
 if __name__ == "__main__":
