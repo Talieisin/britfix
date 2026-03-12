@@ -91,14 +91,19 @@ Create a `.britfixignore` file to prevent specific words from being converted. T
 # Global exceptions (all strategies)
 dialog
 
+# Wildcard — ignores 'dialog', 'dialogs', and any other dictionary
+# entry starting with 'dialog'
+dialog*
+
 # Strategy-scoped exceptions (only apply to that file type)
 code:color
-code:center
+code:center*
 markdown:dialog
 ```
 
 - One word per line, `#` comments, blank lines skipped
 - Optional `strategy:` prefix scopes the exception to that strategy only
+- A trailing `*` acts as a prefix wildcard, ignoring the base word and all its inflected/compound forms in the dictionary (e.g. `color*` ignores `color`, `colors`, `colored`, `colorful`, `colorize`, etc.)
 - Words use American (source) spelling (e.g. `color` not `colour`)
 - Case-insensitive
 
@@ -117,19 +122,23 @@ A personal ignore file applies to all projects:
 
 With this `.britfixignore` at your project root:
 ```text
-code:color
+dialog*
+code:color*
 code:center
 ```
 
 Running britfix on a Python file:
 ```python
-# The color is nice   ->  unchanged (code:color exception)
+# The color is nice   ->  unchanged (code:color* exception)
+# The dialogs work    ->  unchanged (global dialog* exception)
 # The behavior is ok  ->  # The behaviour is ok (not excepted)
 ```
 
-Running britfix on a text file:
+Running britfix on a Markdown file:
 ```text
-The color is nice  ->  The colour is nice (exception is code-scoped, doesn't apply)
+The color is nice   ->  The colour is nice (color* is code-scoped, doesn't apply)
+Open the dialog     ->  unchanged (global dialog* exception)
+Open the dialogs    ->  unchanged (global dialog* wildcard covers inflected forms)
 ```
 
 ## Configuration

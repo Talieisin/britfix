@@ -1113,6 +1113,38 @@ def discover_ignore_words(file_path: str) -> Tuple[Set[str], Dict[str, Set[str]]
     return result
 
 
+def _expand_ignores(ignored: Set[str], dictionary: Dict[str, str]) -> Set[str]:
+    """Expand wildcard ignore patterns against dictionary keys.
+
+    Plain words match exactly.  A trailing ``*`` matches the word prefix against
+    all dictionary keys (e.g. ``dialog*`` matches ``dialog`` and ``dialogs``).
+    All inputs are normalised to lowercase.  A bare ``*`` (empty prefix) is
+    silently dropped to avoid disabling all corrections.
+    """
+    if not ignored:
+        return ignored
+    exact: Set[str] = set()
+    prefixes: List[str] = []
+    for word in ignored:
+        lowered = word.lower()
+        if lowered.endswith('*'):
+            prefix = lowered[:-1]
+            if prefix:  # reject bare '*'
+                prefixes.append(prefix)
+        else:
+            exact.add(lowered)
+    if not prefixes:
+        return exact
+    expanded = set(exact)
+    for key in dictionary:
+        k_lower = key.lower()
+        for prefix in prefixes:
+            if k_lower.startswith(prefix):
+                expanded.add(k_lower)
+                break
+    return expanded
+
+
 def filter_dictionary(
     dictionary: Dict[str, str],
     global_ignores: Set[str],
@@ -1123,6 +1155,9 @@ def filter_dictionary(
 
     global_ignores apply to all strategies. scoped_ignores[strategy_name]
     applies only to the given strategy. Words are matched case-insensitively.
+    A trailing ``*`` acts as a prefix wildcard (e.g. ``dialog*`` ignores
+    ``dialog``, ``dialogs``, and any other dictionary entry starting with
+    ``dialog``).
     """
     strategy_ignores = scoped_ignores.get(strategy_name, set())
     all_ignored = global_ignores | strategy_ignores
@@ -1130,7 +1165,8 @@ def filter_dictionary(
     if not all_ignored:
         return dictionary
 
-    return {k: v for k, v in dictionary.items() if k.lower() not in all_ignored}
+    expanded = _expand_ignores(all_ignored, dictionary)
+    return {k: v for k, v in dictionary.items() if k.lower() not in expanded}
 
 
 # Cache for correctors keyed by (dict_id, strategy_name, frozenset(ignored)).
