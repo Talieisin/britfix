@@ -55,6 +55,7 @@ from britfix_core import (
     get_corrector_for_strategy,
     get_user_ignore_path,
     parse_britfixignore,
+    PlainTextStrategy,
 )
 
 
@@ -115,13 +116,13 @@ def create_backup(filepath: str) -> str:
     return backup_path
 
 
-def process_file_interactive(filepath: str, corrector: SpellingCorrector) -> tuple:
+def process_file_interactive(filepath: str, corrector: SpellingCorrector, strategy) -> tuple:
     """Process a file with enhanced interactive approval."""
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
-    
-    # Find all potential replacements
-    replacements = corrector.find_replacements(content)
+
+    # Find replacements filtered by strategy segmentation rules
+    replacements = strategy.find_safe_replacements(content, corrector)
     if not replacements:
         return content, {}
     
@@ -255,8 +256,8 @@ def apply_replacements(text: str, replacements: list) -> tuple:
 
 def process_stdin_interactive(content: str, corrector: SpellingCorrector) -> tuple:
     """Process stdin content with enhanced interactive approval."""
-    # Find all potential replacements
-    replacements = corrector.find_replacements(content)
+    # Find replacements using PlainTextStrategy for consistency
+    replacements = PlainTextStrategy().find_safe_replacements(content, corrector)
     if not replacements:
         return content, {}
     
@@ -406,7 +407,13 @@ Examples:
 
             # Process the file
             if args.interactive:
-                corrected_content, file_changes = process_file_interactive(filepath, file_corrector)
+                if not strategy.supports_interactive:
+                    print(f"britfix: interactive mode not supported for this file type, processing non-interactively: {filepath}", file=sys.stderr)
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    corrected_content, file_changes = strategy.process(content, file_corrector)
+                else:
+                    corrected_content, file_changes = process_file_interactive(filepath, file_corrector, strategy)
             else:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()

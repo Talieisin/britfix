@@ -161,10 +161,54 @@ def load_spelling_mappings(file_path: Optional[str] = None) -> Dict[str, str]:
 # File processing strategies for different file types
 class FileProcessingStrategy:
     """Base class for file processing strategies."""
-    
+
+    supports_interactive = True
+
     def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
         """Process content and return corrected text with change tracking."""
         return corrector.correct_text(content)
+
+    def find_safe_replacements(self, content: str, corrector: SpellingCorrector) -> List[Tuple[int, int, str, str]]:
+        """Find replacements filtered by this strategy's segmentation rules.
+
+        Uses positional comparison between the original and strategy-processed
+        text to determine which candidates the strategy considers safe.
+
+        Note: This requires that process() preserves the structure of
+        non-corrected regions (no reformatting, normalisation, or reordering).
+        Strategies that reformat content (e.g. JSONStrategy) must not use
+        this method.
+        """
+        all_replacements = corrector.find_replacements(content)
+        if not all_replacements:
+            return []
+        corrected, _ = self.process(content, corrector)
+        safe = []
+        offset = 0
+        for start, end, original, replacement in all_replacements:
+            adj_start = start + offset
+            adj_end_replaced = adj_start + len(replacement)
+            # Character after the original span in the source content
+            char_after_original = content[end:end + 1]
+
+            # Check whether the replacement appears here and is followed
+            # by the same boundary as in the original content.
+            if corrected[adj_start:adj_end_replaced] == replacement:
+                char_after_candidate = corrected[adj_end_replaced:adj_end_replaced + 1]
+                if char_after_candidate == char_after_original:
+                    safe.append((start, end, original, replacement))
+                    offset += len(replacement) - len(original)
+                    continue
+
+            # If the above didn't confirm an applied replacement, check if
+            # the original text is still present unchanged at this position.
+            adj_end_original = adj_start + len(original)
+            if corrected[adj_start:adj_end_original] == original:
+                # Not applied by strategy, no offset change
+                continue
+
+            # Unexpected/misaligned state, skip conservatively
+        return safe
 
 
 class PlainTextStrategy(FileProcessingStrategy):
@@ -629,7 +673,9 @@ class CssStrategy(FileProcessingStrategy):
 
 class JSONStrategy(FileProcessingStrategy):
     """Process JSON files, only correcting string values."""
-    
+
+    supports_interactive = False
+
     def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
         try:
             data = json.loads(content)
