@@ -23,6 +23,7 @@ from britfix_core import (
     get_corrector_for_strategy,
     get_file_strategy_name,
     _ignore_cache,
+    _corrector_cache,
 )
 from britfix import apply_replacements
 
@@ -1260,6 +1261,89 @@ class TestIgnoreIntegration:
         strategy = PlainTextStrategy()
         result, _ = strategy.process(txt_file.read_text(), txt_corrector)
         assert 'colour' in result
+
+
+class TestWildcardIgnore:
+    """Test trailing * wildcard in .britfixignore entries."""
+
+    @pytest.fixture
+    def dictionary(self):
+        return load_spelling_mappings()
+
+    def test_wildcard_expands_to_inflected_forms(self, dictionary):
+        """dialog* should ignore both 'dialog' and 'dialogs'."""
+        filtered = filter_dictionary(dictionary, {'dialog*'}, {}, 'text')
+        assert 'dialog' not in filtered
+        assert 'dialogs' not in filtered
+        assert 'behavior' in filtered  # Unrelated word unaffected
+
+    def test_exact_word_does_not_expand(self, dictionary):
+        """Plain 'dialog' (no *) should only ignore the exact word."""
+        filtered = filter_dictionary(dictionary, {'dialog'}, {}, 'text')
+        assert 'dialog' not in filtered
+        assert 'dialogs' in filtered  # Plural NOT ignored
+
+    def test_wildcard_color_family(self, dictionary):
+        """color* should ignore color, colors, colored, colorful, etc."""
+        filtered = filter_dictionary(dictionary, {'color*'}, {}, 'text')
+        for key in list(dictionary.keys()):
+            if key.lower().startswith('color'):
+                assert key not in filtered, f"'{key}' should be filtered by color*"
+        assert 'behavior' in filtered
+
+    def test_wildcard_in_scoped_ignore(self, dictionary):
+        """Wildcards should work in strategy-scoped ignores too."""
+        filtered = filter_dictionary(dictionary, set(), {'code': {'dialog*'}}, 'code')
+        assert 'dialog' not in filtered
+        assert 'dialogs' not in filtered
+
+    def test_wildcard_scoped_does_not_leak(self, dictionary):
+        """Wildcard scoped to 'code' should not affect 'text'."""
+        filtered = filter_dictionary(dictionary, set(), {'code': {'dialog*'}}, 'text')
+        assert 'dialog' in filtered
+        assert 'dialogs' in filtered
+
+    def test_parse_preserves_wildcard(self):
+        """parse_britfixignore should keep trailing * in words."""
+        content = "dialog*\ncode:color*\n"
+        global_ig, scoped_ig = parse_britfixignore(content)
+        assert 'dialog*' in global_ig
+        assert 'color*' in scoped_ig.get('code', set())
+
+    def test_mixed_case_wildcard(self, dictionary):
+        """Wildcard matching should be case-insensitive."""
+        filtered = filter_dictionary(dictionary, {'Dialog*'}, {}, 'text')
+        assert 'dialog' not in filtered
+        assert 'dialogs' not in filtered
+
+    def test_mixed_case_exact(self, dictionary):
+        """Exact matching should be case-insensitive."""
+        filtered = filter_dictionary(dictionary, {'Dialog'}, {}, 'text')
+        assert 'dialog' not in filtered
+
+    def test_bare_star_does_not_disable_all(self, dictionary):
+        """A bare '*' should be silently dropped, not disable all corrections."""
+        filtered = filter_dictionary(dictionary, {'*'}, {}, 'text')
+        assert len(filtered) == len(dictionary)
+
+    def test_end_to_end_wildcard_ignore(self, tmp_path, dictionary):
+        """Full integration: wildcard in .britfixignore file."""
+        _ignore_cache.clear()
+        _corrector_cache.clear()
+
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('dialog*\n')
+        md_file = tmp_path / 'test.md'
+        md_file.write_text('The dialog and dialogs are shown.\n')
+
+        g, s = discover_ignore_words(str(md_file))
+        corrector = get_corrector_for_strategy(dictionary, g, s, 'markdown')
+        strategy = MarkdownStrategy()
+        result, changes = strategy.process(md_file.read_text(), corrector)
+        assert 'dialogue' not in result
+        assert 'dialogues' not in result
+        assert 'dialog' in result
+        assert 'dialogs' in result
 
 
 class TestUserIgnorePath:
