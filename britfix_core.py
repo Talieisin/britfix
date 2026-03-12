@@ -1124,24 +1124,23 @@ def _expand_ignores(ignored: Set[str], dictionary: Dict[str, str]) -> Set[str]:
     if not ignored:
         return ignored
     exact: Set[str] = set()
-    prefixes: List[str] = []
+    prefixes: Set[str] = set()
     for word in ignored:
         lowered = word.lower()
         if lowered.endswith('*'):
             prefix = lowered[:-1]
             if prefix:  # reject bare '*'
-                prefixes.append(prefix)
+                prefixes.add(prefix)
         else:
             exact.add(lowered)
     if not prefixes:
         return exact
     expanded = set(exact)
+    prefix_tuple = tuple(prefixes)
     for key in dictionary:
         k_lower = key.lower()
-        for prefix in prefixes:
-            if k_lower.startswith(prefix):
-                expanded.add(k_lower)
-                break
+        if k_lower.startswith(prefix_tuple):
+            expanded.add(k_lower)
     return expanded
 
 
@@ -1166,6 +1165,8 @@ def filter_dictionary(
         return dictionary
 
     expanded = _expand_ignores(all_ignored, dictionary)
+    if not expanded:
+        return dictionary
     return {k: v for k, v in dictionary.items() if k.lower() not in expanded}
 
 
