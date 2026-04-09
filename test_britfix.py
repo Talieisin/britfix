@@ -395,6 +395,90 @@ Normal color text."""
         assert "~7" in result
         assert "analysed" in result
 
+    # === BLOCKQUOTES ===
+
+    def test_blockquote_line_preserved(self, strategy, corrector):
+        """A single blockquote line should be preserved verbatim (quoted text is verbatim)."""
+        text = '> "The organization analyzed its color scheme."'
+        result, changes = strategy.process(text, corrector)
+        assert result == text, f"Blockquote was modified: {result}"
+
+    def test_blockquote_preserved_prose_converted(self, strategy, corrector):
+        """Prose around a blockquote should be converted; blockquote itself should not."""
+        text = """Before the color.
+
+> "The organization analyzed its color scheme."
+
+After the color."""
+        result, changes = strategy.process(text, corrector)
+        assert '> "The organization analyzed its color scheme."' in result
+        assert "Before the colour." in result
+        assert "After the colour." in result
+
+    def test_multiline_blockquote_preserved(self, strategy, corrector):
+        """Multi-line blockquotes should preserve every line."""
+        text = """Prose with color.
+
+> "First line with organization.
+> Second line with behavior.
+> Third line with favorite."
+
+More color prose."""
+        result, changes = strategy.process(text, corrector)
+        assert "> \"First line with organization." in result
+        assert "> Second line with behavior." in result
+        assert "> Third line with favorite.\"" in result
+        assert "with colour" in result
+        assert "More colour prose." in result
+
+    def test_blockquote_with_leading_spaces_preserved(self, strategy, corrector):
+        """Blockquotes with up to 3 leading spaces should still be preserved."""
+        text = """Prose color.
+
+   > "Indented quote with organization."
+
+More color."""
+        result, changes = strategy.process(text, corrector)
+        assert '   > "Indented quote with organization."' in result
+        assert "Prose colour." in result
+        assert "More colour." in result
+
+    def test_four_space_indent_is_code_not_blockquote(self, strategy, corrector):
+        """4+ leading spaces should be treated as indented code block, not blockquote."""
+        text = """Prose color.
+
+    > "This is indented code, not a blockquote with organization."
+
+More color."""
+        result, changes = strategy.process(text, corrector)
+        # 4 spaces makes this an indented code block — preserved anyway, so organization stays
+        assert "organization" in result
+        assert "Prose colour." in result
+        assert "More colour." in result
+
+    def test_greater_than_in_prose_not_treated_as_blockquote(self, strategy, corrector):
+        """A > mid-line should not trigger blockquote preservation."""
+        text = "If color > organization, analyze the behavior."
+        result, changes = strategy.process(text, corrector)
+        assert "colour" in result
+        assert "organisation" in result
+        assert "analyse" in result
+        assert "behaviour" in result
+
+    def test_blockquote_at_start_of_file(self, strategy, corrector):
+        """A blockquote as the very first line should be preserved."""
+        text = '> "Opening quote with organization."\n\nFollowing color prose.'
+        result, changes = strategy.process(text, corrector)
+        assert '> "Opening quote with organization."' in result
+        assert "Following colour prose." in result
+
+    def test_blockquote_at_end_of_file_no_trailing_newline(self, strategy, corrector):
+        """A blockquote at the very end of the file (no trailing newline) should be preserved."""
+        text = 'Leading color prose.\n\n> "Closing quote with organization."'
+        result, changes = strategy.process(text, corrector)
+        assert '> "Closing quote with organization."' in result
+        assert "Leading colour prose." in result
+
 
 class TestMarkdownStrategyMapping:
     """Test that markdown file extensions map to MarkdownStrategy."""
