@@ -1167,26 +1167,40 @@ def discover_ignore_words(file_path: str) -> Tuple[Set[str], Dict[str, Set[str]]
     return result
 
 
-def _expand_ignores(ignored: Set[str], dictionary: Dict[str, str]) -> Set[str]:
+def _expand_ignores(
+    ignored: Set[str],
+    dictionary: Dict[str, str],
+    allow_bare_wildcard: bool = False,
+) -> Set[str]:
     """Expand wildcard ignore patterns against dictionary keys.
 
     Plain words match exactly.  A trailing ``*`` matches the word prefix against
     all dictionary keys (e.g. ``dialog*`` matches ``dialog`` and ``dialogs``).
-    All inputs are normalised to lowercase.  A bare ``*`` (empty prefix) is
-    silently dropped to avoid disabling all corrections.
+    All inputs are normalised to lowercase.
+
+    A bare ``*`` (empty prefix) is silently dropped by default to avoid
+    disabling all corrections.  When ``allow_bare_wildcard`` is True, a bare
+    ``*`` expands to every dictionary key — used for strategy-scoped escape
+    hatches like ``json:*`` that disable an entire strategy.
     """
     if not ignored:
         return ignored
     exact: Set[str] = set()
     prefixes: Set[str] = set()
+    bare_wildcard = False
     for word in ignored:
         lowered = word.lower()
         if lowered.endswith('*'):
             prefix = lowered[:-1]
-            if prefix:  # reject bare '*'
+            if prefix:
                 prefixes.add(prefix)
+            elif allow_bare_wildcard:
+                bare_wildcard = True
+            # else: bare '*' silently dropped
         else:
             exact.add(lowered)
+    if bare_wildcard:
+        return {k.lower() for k in dictionary}
     if not prefixes:
         return exact
     expanded = set(exact)
@@ -1211,14 +1225,19 @@ def filter_dictionary(
     A trailing ``*`` acts as a prefix wildcard (e.g. ``dialog*`` ignores
     ``dialog``, ``dialogs``, and any other dictionary entry starting with
     ``dialog``).
+
+    A bare ``*`` is allowed only as a strategy-scoped entry (``json:*``)
+    where it disables the entire strategy. As a global entry it is silently
+    dropped, since it would suppress all corrections everywhere.
     """
     strategy_ignores = scoped_ignores.get(strategy_name, set())
-    all_ignored = global_ignores | strategy_ignores
 
-    if not all_ignored:
+    if not global_ignores and not strategy_ignores:
         return dictionary
 
-    expanded = _expand_ignores(all_ignored, dictionary)
+    expanded_global = _expand_ignores(global_ignores, dictionary, allow_bare_wildcard=False)
+    expanded_scoped = _expand_ignores(strategy_ignores, dictionary, allow_bare_wildcard=True)
+    expanded = expanded_global | expanded_scoped
     if not expanded:
         return dictionary
     return {k: v for k, v in dictionary.items() if k.lower() not in expanded}
