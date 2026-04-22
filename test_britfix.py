@@ -25,7 +25,7 @@ from britfix_core import (
     _ignore_cache,
     _corrector_cache,
 )
-from britfix import apply_replacements
+from britfix import apply_replacements, group_replacements_by_word
 
 
 @pytest.fixture
@@ -1614,6 +1614,39 @@ class TestInteractiveStrategyInvariant:
         result_interactive, _ = apply_replacements(content, safe)
         result_process, _ = strategy.process(content, corrector)
         assert result_interactive == result_process
+
+
+class TestGroupReplacementsByWord:
+    """Group interactive-mode replacements by their lowercased original."""
+
+    def test_empty_input(self):
+        assert group_replacements_by_word([]) == []
+
+    def test_single_replacement(self):
+        repl = (0, 5, "color", "colour")
+        assert group_replacements_by_word([repl]) == [("color", [repl])]
+
+    def test_multiple_distinct_words_preserve_insertion_order(self):
+        a = (0, 5, "color", "colour")
+        b = (10, 18, "behavior", "behaviour")
+        c = (20, 27, "analyze", "analyse")
+        result = group_replacements_by_word([a, b, c])
+        assert [k for k, _ in result] == ["color", "behavior", "analyze"]
+        assert result[0][1] == [a]
+        assert result[1][1] == [b]
+        assert result[2][1] == [c]
+
+    def test_repeated_words_grouped_under_same_key(self):
+        a = (0, 5, "color", "colour")
+        b = (10, 15, "Color", "Colour")  # different case, same key
+        c = (20, 28, "behavior", "behaviour")
+        d = (30, 35, "color", "colour")
+        result = group_replacements_by_word([a, b, c, d])
+        # 'color' first (insertion order), then 'behavior'
+        assert [k for k, _ in result] == ["color", "behavior"]
+        # All three color-family replacements grouped together, in encounter order
+        assert result[0][1] == [a, b, d]
+        assert result[1][1] == [c]
 
 
 class TestJsonInteractiveFallback:
