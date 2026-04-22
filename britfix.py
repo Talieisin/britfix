@@ -7,7 +7,7 @@ import os
 import sys
 import glob
 import logging
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from pathlib import Path
 
 try:
@@ -116,6 +116,18 @@ def create_backup(filepath: str) -> str:
     return backup_path
 
 
+def group_replacements_by_word(replacements: list) -> list:
+    """Group replacements by their lowercased original word, preserving insertion order.
+
+    Returns a list of ``(lowercased_original, [replacements])`` tuples.
+    """
+    groups: "OrderedDict[str, list]" = OrderedDict()
+    for repl in replacements:
+        key = repl[2].lower()
+        groups.setdefault(key, []).append(repl)
+    return list(groups.items())
+
+
 def process_file_interactive(filepath: str, corrector: SpellingCorrector, strategy) -> tuple:
     """Process a file with enhanced interactive approval."""
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -125,22 +137,9 @@ def process_file_interactive(filepath: str, corrector: SpellingCorrector, strate
     replacements = strategy.find_safe_replacements(content, corrector)
     if not replacements:
         return content, {}
-    
-    # Group replacements by word
-    word_groups = list(defaultdict(list).items())
-    for repl in replacements:
-        found = False
-        for i, (key, group) in enumerate(word_groups):
-            if key == repl[2].lower():
-                group.append(repl)
-                found = True
-                break
-        if not found:
-            word_groups.append((repl[2].lower(), [repl]))
-    
-    # Remove empty groups and convert to list
-    word_groups = [(k, v) for k, v in word_groups if v]
-    
+
+    word_groups = group_replacements_by_word(replacements)
+
     return navigate_changes_interactive(content, word_groups, filepath)
 
 
@@ -256,26 +255,12 @@ def apply_replacements(text: str, replacements: list) -> tuple:
 
 def process_stdin_interactive(content: str, corrector: SpellingCorrector) -> tuple:
     """Process stdin content with enhanced interactive approval."""
-    # Find replacements using PlainTextStrategy for consistency
     replacements = PlainTextStrategy().find_safe_replacements(content, corrector)
     if not replacements:
         return content, {}
-    
-    # Group replacements by word (same logic as file processing)
-    word_groups = list(defaultdict(list).items())
-    for repl in replacements:
-        found = False
-        for i, (key, group) in enumerate(word_groups):
-            if key == repl[2].lower():
-                group.append(repl)
-                found = True
-                break
-        if not found:
-            word_groups.append((repl[2].lower(), [repl]))
-    
-    # Remove empty groups
-    word_groups = [(k, v) for k, v in word_groups if v]
-    
+
+    word_groups = group_replacements_by_word(replacements)
+
     return navigate_changes_interactive(content, word_groups, "stdin")
 
 
