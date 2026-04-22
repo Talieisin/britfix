@@ -68,6 +68,8 @@ Different file types are handled by different strategies, configured in `config.
 
 JSON values are corrected only when they contain whitespace. Single-token strings — `"center"`, `"colorScheme"`, `"src/Color.tsx"` — are treated as identifiers and left alone, since most JSON values in config files are programmatic, not prose. Multi-word values like `"The organization was reorganized"` are still corrected normally.
 
+To opt out of JSON correction entirely, add `json:*` to your `.britfixignore` (see the [strategy escape hatch](#format) below).
+
 ### Code File Handling
 
 For code files, the tool intelligently handles context:
@@ -107,15 +109,20 @@ markdown:dialog
 # Disable an entire strategy (escape hatch — equivalent to "ignore every
 # word in JSON files")
 json:*
+
+# Phrase exceptions (quoted) — preserve a multi-word phrase verbatim
+# while still correcting its constituent words elsewhere.
+"mini program"
+markdown:"mini program"
 ```
 
-- One word per line, `#` comments, blank lines skipped
-- Optional `strategy:` prefix scopes the exception to that strategy only
-- A trailing `*` acts as a prefix wildcard, ignoring the base word and all its inflected/compound forms in the dictionary (e.g. `color*` ignores `color`, `colors`, `colored`, `colorful`, `colorize`, etc.)
+- One entry per line, `#` comments, blank lines skipped
+- **Words** (bare, no quotes): `dialog`, `code:color`, optional `strategy:` prefix, optional trailing `*` for prefix wildcard (e.g. `color*` ignores `color`, `colors`, `colored`, `colorful`, `colorize`, etc.)
+- **Phrases** (quoted): `"mini program"` or `markdown:"mini program"` preserves the literal phrase wherever it appears. Words inside the phrase span are not corrected; the same words appearing elsewhere are still corrected normally. Phrase matches are case-insensitive but the original casing of the matched span is preserved.
 - A scoped bare `*` (e.g. `json:*`) disables that strategy entirely. Useful when a strategy is too broad for your project and you want to opt out without enumerating every word.
 - A global bare `*` is invalid and ignored; it does not match anything or act as "ignore everything"
 - Words use American (source) spelling (e.g. `color` not `colour`)
-- Case-insensitive
+- All matches are case-insensitive
 
 ### File Discovery
 
@@ -149,6 +156,18 @@ Running britfix on a Markdown file:
 The color is nice   ->  The colour is nice (color* is code-scoped, doesn't apply)
 Open the dialog     ->  unchanged (global dialog* exception)
 Open the dialogs    ->  unchanged (global dialog* wildcard covers inflected forms)
+```
+
+#### Phrase example
+
+With `.britfixignore`:
+```text
+"mini program"
+```
+
+```text
+Open the mini program now.    ->  unchanged ("program" is preserved inside the phrase)
+The program is great.         ->  The programme is great. (standalone "program" still corrected)
 ```
 
 ## Configuration
