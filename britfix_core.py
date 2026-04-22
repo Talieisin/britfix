@@ -734,7 +734,17 @@ class JSONStrategy(FileProcessingStrategy):
         try:
             data = json.loads(content)
             total_changes = defaultdict(int)
-            self._process_json_value(data, corrector, total_changes)
+            # Root may itself be a string (valid JSON like `"hello world"`).
+            # _process_json_value walks dicts/lists and rewrites strings in
+            # place, so a string root would otherwise be missed.
+            if isinstance(data, str):
+                if any(c.isspace() for c in data):
+                    corrected, changes = corrector.correct_text(data)
+                    data = corrected
+                    for word, count in changes.items():
+                        total_changes[word] += count
+            else:
+                self._process_json_value(data, corrector, total_changes)
             return json.dumps(data, indent=2, ensure_ascii=False), dict(total_changes)
         except json.JSONDecodeError as e:
             print(
@@ -744,23 +754,31 @@ class JSONStrategy(FileProcessingStrategy):
             return content, {}
 
     def _process_json_value(self, value, corrector: SpellingCorrector, change_tracker: defaultdict):
-        """Recursively process JSON values."""
+        """Recursively process JSON values.
+
+        Only string values containing whitespace are corrected. Single-token
+        strings are treated as identifiers (config values, CSS keywords, paths,
+        camelCase / snake_case names) and skipped. This avoids silently
+        rewriting programmatic values like "center" or "colorScheme".
+        """
         if isinstance(value, dict):
             for k, v in value.items():
                 if isinstance(v, str):
-                    corrected, changes = corrector.correct_text(v)
-                    value[k] = corrected
-                    for word, count in changes.items():
-                        change_tracker[word] += count
+                    if any(c.isspace() for c in v):
+                        corrected, changes = corrector.correct_text(v)
+                        value[k] = corrected
+                        for word, count in changes.items():
+                            change_tracker[word] += count
                 else:
                     self._process_json_value(v, corrector, change_tracker)
         elif isinstance(value, list):
             for i, item in enumerate(value):
                 if isinstance(item, str):
-                    corrected, changes = corrector.correct_text(item)
-                    value[i] = corrected
-                    for word, count in changes.items():
-                        change_tracker[word] += count
+                    if any(c.isspace() for c in item):
+                        corrected, changes = corrector.correct_text(item)
+                        value[i] = corrected
+                        for word, count in changes.items():
+                            change_tracker[word] += count
                 else:
                     self._process_json_value(item, corrector, change_tracker)
 
