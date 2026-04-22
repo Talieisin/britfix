@@ -734,7 +734,17 @@ class JSONStrategy(FileProcessingStrategy):
         try:
             data = json.loads(content)
             total_changes = defaultdict(int)
-            self._process_json_value(data, corrector, total_changes)
+            # Root may itself be a string (valid JSON like `"hello world"`).
+            # _process_json_value walks dicts/lists and rewrites strings in
+            # place, so a string root would otherwise be missed.
+            if isinstance(data, str):
+                if any(c.isspace() for c in data):
+                    corrected, changes = corrector.correct_text(data)
+                    data = corrected
+                    for word, count in changes.items():
+                        total_changes[word] += count
+            else:
+                self._process_json_value(data, corrector, total_changes)
             return json.dumps(data, indent=2, ensure_ascii=False), dict(total_changes)
         except json.JSONDecodeError as e:
             print(

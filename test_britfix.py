@@ -1817,6 +1817,29 @@ class TestJSONStrategyHeuristic:
         assert "colour" in result
         assert "behaviour" in result
 
+    def test_root_string_with_whitespace_corrected(self, strategy, corrector):
+        """A bare string at the JSON root must still be reached by the heuristic."""
+        content = '"The organization was analyzed"'
+        result, changes = strategy.process(content, corrector)
+        assert "organisation" in result
+        assert "analysed" in result
+        assert changes.get("organization") == 1
+
+    def test_root_string_without_whitespace_skipped(self, strategy, corrector):
+        """A bare identifier at the JSON root is treated as an identifier."""
+        content = '"organized"'
+        result, changes = strategy.process(content, corrector)
+        # json.dumps re-quotes the string identically.
+        assert result == '"organized"'
+        assert changes == {}
+
+    def test_root_number_unaffected(self, strategy, corrector):
+        """Non-string scalar roots round-trip cleanly through the heuristic path."""
+        content = '42'
+        result, changes = strategy.process(content, corrector)
+        assert result == '42'
+        assert changes == {}
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
