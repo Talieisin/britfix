@@ -1459,6 +1459,60 @@ class TestWildcardIgnore:
         filtered = filter_dictionary(dictionary, {'*'}, {}, 'text')
         assert len(filtered) == len(dictionary)
 
+    def test_scoped_bare_star_disables_strategy(self, dictionary):
+        """A scoped 'json:*' should disable the entire strategy."""
+        filtered = filter_dictionary(dictionary, set(), {'json': {'*'}}, 'json')
+        assert filtered == {}
+
+    def test_scoped_bare_star_does_not_leak_to_other_strategies(self, dictionary):
+        """A scoped 'json:*' must not affect other strategies."""
+        filtered = filter_dictionary(dictionary, set(), {'json': {'*'}}, 'markdown')
+        assert len(filtered) == len(dictionary)
+
+    def test_scoped_bare_star_combined_with_other_scoped_words(self, dictionary):
+        """'json:*' alongside 'markdown:dialog' only zeroes out the JSON strategy."""
+        scoped = {'json': {'*'}, 'markdown': {'dialog'}}
+        json_filtered = filter_dictionary(dictionary, set(), scoped, 'json')
+        md_filtered = filter_dictionary(dictionary, set(), scoped, 'markdown')
+        assert json_filtered == {}
+        # markdown still has everything except 'dialog'
+        assert 'dialog' not in md_filtered
+        assert 'behavior' in md_filtered
+
+    def test_end_to_end_strategy_wildcard_skips_json(self, tmp_path, dictionary):
+        """Full integration: 'json:*' in .britfixignore skips JSON corrections."""
+        _ignore_cache.clear()
+        _corrector_cache.clear()
+
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('json:*\n')
+        json_file = tmp_path / 'settings.json'
+        json_file.write_text('{"theme": "color", "label": "organized"}\n')
+
+        g, s = discover_ignore_words(str(json_file))
+        corrector = get_corrector_for_strategy(dictionary, g, s, 'json')
+        strategy = JSONStrategy()
+        result, changes = strategy.process(json_file.read_text(), corrector)
+        assert 'color' in result
+        assert 'organized' in result
+        assert changes == {}
+
+    def test_corrector_cache_distinguishes_global_vs_scoped_wildcard(self, dictionary):
+        """A global '*' (dropped) and a scoped 'json:*' (disable) must not collide
+        in the corrector cache, even though their unioned tokens are identical."""
+        _corrector_cache.clear()
+
+        # Global '*' should be dropped — corrector keeps the full dictionary.
+        global_corrector = get_corrector_for_strategy(dictionary, {'*'}, {}, 'json')
+        assert len(global_corrector.dictionary) == len(dictionary)
+
+        # Scoped 'json:*' should disable the strategy — corrector is empty.
+        scoped_corrector = get_corrector_for_strategy(dictionary, set(), {'json': {'*'}}, 'json')
+        assert scoped_corrector.dictionary == {}
+
+        # The two must be distinct objects, not a cached reuse.
+        assert global_corrector is not scoped_corrector
+
     def test_end_to_end_wildcard_ignore(self, tmp_path, dictionary):
         """Full integration: wildcard in .britfixignore file."""
         _ignore_cache.clear()

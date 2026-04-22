@@ -99,12 +99,17 @@ dialog*
 code:color
 code:center*
 markdown:dialog
+
+# Disable an entire strategy (escape hatch — equivalent to "ignore every
+# word in JSON files")
+json:*
 ```
 
 - One word per line, `#` comments, blank lines skipped
 - Optional `strategy:` prefix scopes the exception to that strategy only
 - A trailing `*` acts as a prefix wildcard, ignoring the base word and all its inflected/compound forms in the dictionary (e.g. `color*` ignores `color`, `colors`, `colored`, `colorful`, `colorize`, etc.)
-- A bare `*` entry is invalid and ignored; it does not match anything or act as "ignore everything"
+- A scoped bare `*` (e.g. `json:*`) disables that strategy entirely. Useful when a strategy is too broad for your project and you want to opt out without enumerating every word.
+- A global bare `*` is invalid and ignored; it does not match anything or act as "ignore everything"
 - Words use American (source) spelling (e.g. `color` not `colour`)
 - Case-insensitive
 
