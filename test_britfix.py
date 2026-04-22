@@ -1052,49 +1052,49 @@ class TestBritfixIgnoreParsing:
     """Test .britfixignore file parsing."""
 
     def test_empty_file(self):
-        g, s = parse_britfixignore('')
+        g, s, _, _ = parse_britfixignore('')
         assert g == set()
         assert s == {}
 
     def test_comments_and_blank_lines(self):
         content = "# a comment\n\n# another\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert g == set()
         assert s == {}
 
     def test_global_words(self):
         content = "color\nbehavior\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert g == {'color', 'behavior'}
         assert s == {}
 
     def test_scoped_words(self):
         content = "code:color\nmarkdown:dialog\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert g == set()
         assert s == {'code': {'color'}, 'markdown': {'dialog'}}
 
     def test_mixed_global_and_scoped(self):
         content = "color\ncode:dialog\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert g == {'color'}
         assert s == {'code': {'dialog'}}
 
     def test_whitespace_handling(self):
         content = "  color  \n  code : dialog  \n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert 'color' in g
         assert 'dialog' in s.get('code', set())
 
     def test_case_insensitivity(self):
         content = "Color\nCode:Dialog\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert 'color' in g
         assert 'dialog' in s.get('code', set())
 
     def test_unknown_strategy_warns(self, capsys):
         content = "bogus:color\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert g == set()
         assert s == {}
         captured = capsys.readouterr()
@@ -1102,13 +1102,13 @@ class TestBritfixIgnoreParsing:
 
     def test_empty_word_after_colon_skipped(self):
         content = "code:\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert g == set()
         assert s == {}
 
     def test_multiple_words_same_strategy(self):
         content = "code:color\ncode:dialog\ncode:center\n"
-        g, s = parse_britfixignore(content)
+        g, s, _, _ = parse_britfixignore(content)
         assert s == {'code': {'color', 'dialog', 'center'}}
 
 
@@ -1130,7 +1130,7 @@ class TestBritfixIgnoreDiscovery:
         target = tmp_path / 'sub' / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert 'color' in g
 
     def test_nested_dirs_merge(self, tmp_path):
@@ -1142,7 +1142,7 @@ class TestBritfixIgnoreDiscovery:
         target = tmp_path / 'sub' / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert 'color' in g
         assert 'behavior' in g
 
@@ -1155,7 +1155,7 @@ class TestBritfixIgnoreDiscovery:
         target = tmp_path / 'sub' / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert s.get('code') == {'color', 'dialog'}
 
     def test_stops_at_home_dir(self, tmp_path, monkeypatch):
@@ -1171,7 +1171,7 @@ class TestBritfixIgnoreDiscovery:
         target = project / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert 'color' not in g
 
     def test_worktree_git_file(self, tmp_path):
@@ -1181,7 +1181,7 @@ class TestBritfixIgnoreDiscovery:
         target = tmp_path / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert 'color' in g
 
     def test_user_config_merged(self, tmp_path, monkeypatch):
@@ -1197,7 +1197,7 @@ class TestBritfixIgnoreDiscovery:
         target = tmp_path / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert 'color' in g
         assert 'behavior' in g
 
@@ -1229,7 +1229,7 @@ class TestBritfixIgnoreDiscovery:
         target = project / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert 'color' in g
 
     def test_invalid_utf8_ignore_file_skipped(self, tmp_path):
@@ -1241,7 +1241,7 @@ class TestBritfixIgnoreDiscovery:
         target.touch()
 
         # Should not raise, should return empty ignores
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert isinstance(g, set)
         assert isinstance(s, dict)
 
@@ -1256,7 +1256,7 @@ class TestBritfixIgnoreDiscovery:
         target = tmp_path / 'file.py'
         target.touch()
 
-        g, s = discover_ignore_words(str(target))
+        g, s, _, _ = discover_ignore_words(str(target))
         assert isinstance(g, set)
 
 
@@ -1271,6 +1271,213 @@ class TestBritfixIgnoreParsingEdgeCases:
         # The raw escape should not appear in stderr
         assert '\x1b[' not in captured.err
         assert 'unknown strategy' in captured.err
+
+
+class TestBritfixIgnorePhraseParsing:
+    """Quoted phrase entries in .britfixignore."""
+
+    def test_global_phrase_parsed(self):
+        g, s, gp, sp = parse_britfixignore('"mini program"\n')
+        assert gp == {'mini program'}
+        assert g == set()
+        assert sp == {}
+
+    def test_scoped_phrase_parsed(self):
+        g, s, gp, sp = parse_britfixignore('markdown:"mini program"\n')
+        assert sp == {'markdown': {'mini program'}}
+        assert gp == set()
+        assert s == {}
+
+    def test_phrase_preserves_original_casing(self):
+        """Phrases are stored verbatim — casing is preserved for restoration."""
+        g, s, gp, sp = parse_britfixignore('"Mini Program"\n')
+        assert gp == {'Mini Program'}
+
+    def test_phrase_with_punctuation_and_inner_spaces(self):
+        g, s, gp, sp = parse_britfixignore('"the United States of America"\n')
+        assert gp == {'the United States of America'}
+
+    def test_words_and_phrases_coexist(self):
+        content = '"mini program"\ndialog\ncode:color\nmarkdown:"power user"\n'
+        g, s, gp, sp = parse_britfixignore(content)
+        assert g == {'dialog'}
+        assert s == {'code': {'color'}}
+        assert gp == {'mini program'}
+        assert sp == {'markdown': {'power user'}}
+
+    def test_unknown_strategy_for_scoped_phrase_warns(self, capsys):
+        content = 'bogus:"mini program"\n'
+        g, s, gp, sp = parse_britfixignore(content)
+        captured = capsys.readouterr()
+        assert 'unknown strategy' in captured.err
+        assert sp == {}
+
+    def test_scoped_phrase_allows_whitespace_around_colon(self):
+        """Whitespace around the ':' is tolerated in scoped phrases, matching
+        the existing word-parsing behaviour (`code : dialog` is also accepted)."""
+        content = 'markdown : "mini program"\nhtml :"power user"\ncss: "dark mode"\n'
+        g, s, gp, sp = parse_britfixignore(content)
+        assert sp == {
+            'markdown': {'mini program'},
+            'html': {'power user'},
+            'css': {'dark mode'},
+        }
+
+
+class TestSpellingCorrectorPhraseMasking:
+    """SpellingCorrector preserves phrase matches verbatim during correction."""
+
+    @pytest.fixture
+    def dictionary(self):
+        return load_spelling_mappings()
+
+    def test_no_phrases_unchanged_behaviour(self, dictionary):
+        """Without phrases, correct_text behaves exactly as before."""
+        corrector = SpellingCorrector(dictionary)
+        result, _ = corrector.correct_text('The color is nice.')
+        assert result == 'The colour is nice.'
+
+    def test_phrase_in_text_preserved(self, dictionary):
+        """Words inside a phrase match are not corrected; standalone uses still are."""
+        corrector = SpellingCorrector(dictionary, phrases={'mini program'})
+        result, _ = corrector.correct_text('A mini program runs the program well.')
+        # Inside the phrase: 'program' preserved.
+        assert 'mini program' in result
+        # Standalone: 'program' becomes 'programme'.
+        assert 'runs the programme well' in result
+
+    def test_phrase_match_is_case_insensitive(self, dictionary):
+        corrector = SpellingCorrector(dictionary, phrases={'mini program'})
+        result, _ = corrector.correct_text('Open Mini Program now.')
+        assert 'Mini Program' in result  # original casing preserved
+
+    def test_longer_phrase_wins_over_shorter(self, dictionary):
+        """Overlapping phrases: longer matches win (sorted descending by length)."""
+        corrector = SpellingCorrector(dictionary, phrases={'color', 'color scheme'})
+        result, _ = corrector.correct_text('Pick a color scheme today.')
+        assert 'color scheme' in result  # longer phrase wins, both words preserved
+
+    def test_change_tracker_excludes_phrase_words(self, dictionary):
+        """Tracked changes must not count words that fell inside a phrase span."""
+        corrector = SpellingCorrector(dictionary, phrases={'mini program'})
+        _, changes = corrector.correct_text('A mini program. The program ran.')
+        # Only one 'program' was outside the phrase and got corrected.
+        assert changes.get('program') == 1
+
+    def test_find_replacements_skips_phrase_overlaps(self, dictionary):
+        """Interactive mode must not offer changes inside phrase spans."""
+        corrector = SpellingCorrector(dictionary, phrases={'mini program'})
+        repls = corrector.find_replacements('A mini program. The program ran.')
+        # Exactly one replacement: the standalone 'program'.
+        assert len(repls) == 1
+        assert repls[0][2] == 'program'
+        assert repls[0][0] > len('A mini program')  # position outside phrase
+
+    def test_phrase_does_not_break_unrelated_corrections(self, dictionary):
+        corrector = SpellingCorrector(dictionary, phrases={'mini program'})
+        result, _ = corrector.correct_text('The color of the mini program was favorable.')
+        assert 'colour' in result
+        assert 'favourable' in result
+        assert 'mini program' in result
+
+    def test_user_text_containing_delimiter_pattern_is_safe(self, dictionary):
+        """If user content already contains the placeholder delimiter pattern
+        with an out-of-range index, restoration must leave it untouched rather
+        than IndexError or rewrite unrelated text."""
+        from britfix_core import _PHRASE_MASK_DELIM
+        corrector = SpellingCorrector(dictionary, phrases={'mini program'})
+        # Note: no phrase matches in this text, so originals=[]. The delimiter
+        # pattern with an out-of-range index appears via the user input itself.
+        bogus_placeholder = f"{_PHRASE_MASK_DELIM}9{_PHRASE_MASK_DELIM}"
+        text = f"The color is {bogus_placeholder} nice."
+        result, _ = corrector.correct_text(text)
+        # 'color' still corrected; the bogus placeholder survives unchanged.
+        assert 'colour' in result
+        assert bogus_placeholder in result
+
+
+class TestPhraseIntegration:
+    """End-to-end: .britfixignore phrase entries flow through to correction."""
+
+    @pytest.fixture
+    def dictionary(self):
+        return load_spelling_mappings()
+
+    def test_global_phrase_via_corrector_factory(self, dictionary):
+        _ignore_cache.clear()
+        _corrector_cache.clear()
+        corrector = get_corrector_for_strategy(
+            dictionary,
+            global_ignores=set(),
+            scoped_ignores={},
+            strategy_name='text',
+            global_phrases={'mini program'},
+            scoped_phrases={},
+        )
+        result, _ = corrector.correct_text('mini program then program alone')
+        assert 'mini program' in result
+        assert 'programme alone' in result
+
+    def test_scoped_phrase_only_applies_to_matching_strategy(self, dictionary):
+        _ignore_cache.clear()
+        _corrector_cache.clear()
+        scoped = {'markdown': {'mini program'}}
+        md_corrector = get_corrector_for_strategy(
+            dictionary, set(), {}, 'markdown',
+            global_phrases=set(), scoped_phrases=scoped,
+        )
+        text_corrector = get_corrector_for_strategy(
+            dictionary, set(), {}, 'text',
+            global_phrases=set(), scoped_phrases=scoped,
+        )
+        md_result, _ = md_corrector.correct_text('mini program')
+        text_result, _ = text_corrector.correct_text('mini program')
+        assert 'mini program' in md_result
+        assert 'mini programme' in text_result  # text strategy still corrects
+
+    def test_corrector_cache_distinguishes_phrase_sets(self, dictionary):
+        """Two correctors that differ only in phrases must not collide in the cache."""
+        _corrector_cache.clear()
+        a = get_corrector_for_strategy(
+            dictionary, set(), {}, 'text',
+            global_phrases={'mini program'}, scoped_phrases={},
+        )
+        b = get_corrector_for_strategy(
+            dictionary, set(), {}, 'text',
+            global_phrases={'open program'}, scoped_phrases={},
+        )
+        assert a is not b
+
+    def test_corrector_cache_normalises_phrase_casing(self, dictionary):
+        """Phrases that differ only in case match identically (case-insensitive)
+        and so must share a cache entry rather than producing duplicates."""
+        _corrector_cache.clear()
+        a = get_corrector_for_strategy(
+            dictionary, set(), {}, 'text',
+            global_phrases={'Mini Program'}, scoped_phrases={},
+        )
+        b = get_corrector_for_strategy(
+            dictionary, set(), {}, 'text',
+            global_phrases={'mini program'}, scoped_phrases={},
+        )
+        assert a is b
+
+    def test_end_to_end_phrase_in_britfixignore(self, tmp_path, dictionary):
+        _ignore_cache.clear()
+        _corrector_cache.clear()
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('"mini program"\n')
+        md_file = tmp_path / 'doc.md'
+        md_file.write_text('Open the mini program; the program is great.\n')
+        g, s, gp, sp = discover_ignore_words(str(md_file))
+        corrector = get_corrector_for_strategy(
+            dictionary, g, s, 'markdown',
+            global_phrases=gp, scoped_phrases=sp,
+        )
+        strategy = MarkdownStrategy()
+        result, _ = strategy.process(md_file.read_text(), corrector)
+        assert 'mini program' in result
+        assert 'the programme is great' in result
 
 
 class TestFilteredCorrector:
@@ -1380,7 +1587,7 @@ class TestIgnoreIntegration:
         txt_file.write_text('The color is nice\n')
 
         # Python file: color should be ignored (code strategy)
-        g, s = discover_ignore_words(str(py_file))
+        g, s, _, _ = discover_ignore_words(str(py_file))
         py_corrector = get_corrector_for_strategy(dictionary, g, s, 'code')
         strategy = CodeStrategy()
         result, _ = strategy.process(py_file.read_text(), py_corrector)
@@ -1389,7 +1596,7 @@ class TestIgnoreIntegration:
 
         # Text file: color should NOT be ignored (text strategy)
         _ignore_cache.clear()
-        g, s = discover_ignore_words(str(txt_file))
+        g, s, _, _ = discover_ignore_words(str(txt_file))
         txt_corrector = get_corrector_for_strategy(dictionary, g, s, 'text')
         strategy = PlainTextStrategy()
         result, _ = strategy.process(txt_file.read_text(), txt_corrector)
@@ -1439,7 +1646,7 @@ class TestWildcardIgnore:
     def test_parse_preserves_wildcard(self):
         """parse_britfixignore should keep trailing * in words."""
         content = "dialog*\ncode:color*\n"
-        global_ig, scoped_ig = parse_britfixignore(content)
+        global_ig, scoped_ig, _, _ = parse_britfixignore(content)
         assert 'dialog*' in global_ig
         assert 'color*' in scoped_ig.get('code', set())
 
@@ -1489,7 +1696,7 @@ class TestWildcardIgnore:
         json_file = tmp_path / 'settings.json'
         json_file.write_text('{"theme": "color", "label": "organized"}\n')
 
-        g, s = discover_ignore_words(str(json_file))
+        g, s, _, _ = discover_ignore_words(str(json_file))
         corrector = get_corrector_for_strategy(dictionary, g, s, 'json')
         strategy = JSONStrategy()
         result, changes = strategy.process(json_file.read_text(), corrector)
@@ -1523,7 +1730,7 @@ class TestWildcardIgnore:
         md_file = tmp_path / 'test.md'
         md_file.write_text('The dialog and dialogs are shown.\n')
 
-        g, s = discover_ignore_words(str(md_file))
+        g, s, _, _ = discover_ignore_words(str(md_file))
         corrector = get_corrector_for_strategy(dictionary, g, s, 'markdown')
         strategy = MarkdownStrategy()
         result, changes = strategy.process(md_file.read_text(), corrector)

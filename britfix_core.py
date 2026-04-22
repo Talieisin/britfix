@@ -62,12 +62,30 @@ except ConfigError as e:
     print(f"Britfix config error: {e}", file=sys.stderr)
     sys.exit(1)
 
-class SpellingCorrector:
-    """Efficient spelling corrector with precompiled regex patterns."""
+# Private-use Unicode codepoint used to delimit phrase placeholders during the
+# mask-correct-restore pass in SpellingCorrector. Picked because it is non-word
+# (so dictionary regex word boundaries treat it as text junction) and is
+# vanishingly unlikely to appear in real source content.
+_PHRASE_MASK_DELIM = ''
+_PHRASE_PLACEHOLDER_RE = re.compile(
+    re.escape(_PHRASE_MASK_DELIM) + r'(\d+)' + re.escape(_PHRASE_MASK_DELIM)
+)
 
-    def __init__(self, dictionary: Dict[str, str]):
+
+class SpellingCorrector:
+    """Efficient spelling corrector with precompiled regex patterns.
+
+    ``phrases`` are literal substrings (case-insensitive) that should be
+    preserved verbatim — any dictionary word that falls inside a phrase match
+    is left untouched. See ``correct_text`` for the masking pass.
+    """
+
+    def __init__(self, dictionary: Dict[str, str], phrases: Optional[Set[str]] = None):
         self.dictionary = {k.lower(): v for k, v in dictionary.items()}
         self.pattern = self._compile_pattern()
+        # Sort phrases by length descending so longer phrases win when alternatives overlap.
+        self._phrases = sorted({p for p in (phrases or set()) if p}, key=len, reverse=True)
+        self._phrase_pattern = self._compile_phrase_pattern()
 
     def _compile_pattern(self) -> Optional[re.Pattern]:
         """Compile regex pattern for all dictionary words."""
@@ -75,7 +93,47 @@ class SpellingCorrector:
             return None
         pattern = r'\b(' + '|'.join(re.escape(word) for word in self.dictionary.keys()) + r')\b'
         return re.compile(pattern, re.IGNORECASE)
-    
+
+    def _compile_phrase_pattern(self) -> Optional[re.Pattern]:
+        if not self._phrases:
+            return None
+        return re.compile('|'.join(re.escape(p) for p in self._phrases), re.IGNORECASE)
+
+    def _mask_phrases(self, text: str) -> Tuple[str, List[str]]:
+        """Replace phrase matches with placeholders. Returns (masked_text, originals)."""
+        if not self._phrase_pattern:
+            return text, []
+        originals: List[str] = []
+
+        def stash(match):
+            originals.append(match.group())
+            return f"{_PHRASE_MASK_DELIM}{len(originals) - 1}{_PHRASE_MASK_DELIM}"
+
+        masked = self._phrase_pattern.sub(stash, text)
+        return masked, originals
+
+    def _restore_phrases(self, text: str, originals: List[str]) -> str:
+        if not originals:
+            return text
+
+        def restore(match):
+            idx = int(match.group(1))
+            # Guard against the (vanishingly unlikely) case where user content
+            # already contained the delimiter pattern with a bogus index. Leave
+            # such matches untouched rather than IndexError-ing or rewriting
+            # unrelated text.
+            if 0 <= idx < len(originals):
+                return originals[idx]
+            return match.group(0)
+
+        return _PHRASE_PLACEHOLDER_RE.sub(restore, text)
+
+    def _phrase_spans(self, text: str) -> List[Tuple[int, int]]:
+        """Return non-overlapping (start, end) spans of phrase matches in ``text``."""
+        if not self._phrase_pattern:
+            return []
+        return [(m.start(), m.end()) for m in self._phrase_pattern.finditer(text)]
+
     def detect_case(self, word: str) -> str:
         """Detect the case pattern of a word."""
         if word.isupper():
@@ -86,7 +144,7 @@ class SpellingCorrector:
             return 'title'
         else:
             return 'mixed'
-    
+
     def apply_case(self, word: str, case_pattern: str) -> str:
         """Apply the detected case pattern to a word."""
         if case_pattern == 'upper':
@@ -97,48 +155,61 @@ class SpellingCorrector:
             return word.title()
         else:
             return word
-    
+
     def find_replacements(self, text: str) -> List[Tuple[int, int, str, str]]:
         """Find all potential replacements in text."""
         if not self.pattern:
             return []
-            
+
+        phrase_spans = self._phrase_spans(text)
         replacements = []
-        
+
         for match in self.pattern.finditer(text):
+            ms, me = match.start(), match.end()
+            # Drop any candidate that overlaps a preserved phrase span.
+            if any(ps < me and ms < pe for ps, pe in phrase_spans):
+                continue
             original_word = match.group()
             case_pattern = self.detect_case(original_word)
             key = original_word.lower()
-            
+
             if key in self.dictionary:
                 british_spelling = self.dictionary[key]
                 replacement = self.apply_case(british_spelling, case_pattern)
                 if original_word != replacement:
-                    replacements.append((match.start(), match.end(), original_word, replacement))
-        
+                    replacements.append((ms, me, original_word, replacement))
+
         return replacements
-    
+
     def correct_text(self, text: str, track_changes: bool = True) -> Tuple[str, Dict[str, int]]:
-        """Apply spelling corrections to text."""
+        """Apply spelling corrections to text.
+
+        If phrase ignores are configured, phrases are masked with placeholder
+        tokens before dictionary correction runs and restored afterwards.
+        Words that fall inside a phrase match are therefore preserved verbatim.
+        """
         if not self.pattern:
             return text, {}
-            
+
+        masked, originals = self._mask_phrases(text)
+
         change_tracker = defaultdict(int) if track_changes else None
-        
+
         def replacement(match):
             original_word = match.group()
             case_pattern = self.detect_case(original_word)
             key = original_word.lower()
-            
+
             if key in self.dictionary:
                 british_spelling = self.dictionary[key]
                 if track_changes:
                     change_tracker[key] += 1
                 return self.apply_case(british_spelling, case_pattern)
-            
+
             return original_word
-        
-        corrected_text = self.pattern.sub(replacement, text)
+
+        corrected_text = self.pattern.sub(replacement, masked)
+        corrected_text = self._restore_phrases(corrected_text, originals)
         return corrected_text, dict(change_tracker) if track_changes else {}
 
 
@@ -1046,22 +1117,58 @@ def is_code_file(file_extension: str) -> bool:
 
 # --- .britfixignore support ---
 
-def parse_britfixignore(content: str) -> Tuple[Set[str], Dict[str, Set[str]]]:
+_PHRASE_LINE_RE = re.compile(r'^"([^"]+)"$')
+_SCOPED_PHRASE_LINE_RE = re.compile(r'^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*"([^"]+)"$')
+
+
+def parse_britfixignore(
+    content: str,
+) -> Tuple[Set[str], Dict[str, Set[str]], Set[str], Dict[str, Set[str]]]:
     """Parse a .britfixignore file.
 
-    Returns (global_ignores, scoped_ignores) where scoped_ignores maps
-    strategy name -> set of words. Words are lowercased. Unknown strategy
-    names produce a warning on stderr and are skipped.
+    Returns ``(global_words, scoped_words, global_phrases, scoped_phrases)``.
+
+    - Bare lines (``dialog``) and ``strategy:word`` lines are word-level
+      ignores, lowercased and matched case-insensitively.
+    - Quoted lines (``"mini program"``) and ``strategy:"mini program"`` lines
+      are phrase-level ignores. Phrases are matched case-insensitively but
+      the original casing of the matched span is preserved in output.
+
+    Unknown strategy names produce a warning on stderr and are skipped.
     """
     valid_strategies = set(_CONFIG['strategies'].keys())
-    global_ignores: Set[str] = set()
-    scoped_ignores: Dict[str, Set[str]] = {}
+    global_words: Set[str] = set()
+    scoped_words: Dict[str, Set[str]] = {}
+    global_phrases: Set[str] = set()
+    scoped_phrases: Dict[str, Set[str]] = {}
 
     for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith('#'):
             continue
 
+        # Try strategy-scoped phrase first (most specific form).
+        m = _SCOPED_PHRASE_LINE_RE.match(line)
+        if m:
+            strategy_name = m.group(1).lower()
+            phrase = m.group(2)
+            if strategy_name not in valid_strategies:
+                safe_name = strategy_name.encode('unicode_escape').decode('ascii')
+                print(
+                    f"britfix: unknown strategy '{safe_name}' in .britfixignore, skipping",
+                    file=sys.stderr,
+                )
+                continue
+            scoped_phrases.setdefault(strategy_name, set()).add(phrase)
+            continue
+
+        # Then unscoped phrase.
+        m = _PHRASE_LINE_RE.match(line)
+        if m:
+            global_phrases.add(m.group(1))
+            continue
+
+        # Fall back to existing word-level handling.
         if ':' in line:
             strategy_name, _, word = line.partition(':')
             strategy_name = strategy_name.strip().lower()
@@ -1072,13 +1179,13 @@ def parse_britfixignore(content: str) -> Tuple[Set[str], Dict[str, Set[str]]]:
                 safe_name = strategy_name.encode('unicode_escape').decode('ascii')
                 print(f"britfix: unknown strategy '{safe_name}' in .britfixignore, skipping", file=sys.stderr)
                 continue
-            if strategy_name not in scoped_ignores:
-                scoped_ignores[strategy_name] = set()
-            scoped_ignores[strategy_name].add(word)
+            if strategy_name not in scoped_words:
+                scoped_words[strategy_name] = set()
+            scoped_words[strategy_name].add(word)
         else:
-            global_ignores.add(line.lower())
+            global_words.add(line.lower())
 
-    return global_ignores, scoped_ignores
+    return global_words, scoped_words, global_phrases, scoped_phrases
 
 
 def get_user_ignore_path() -> Optional[Path]:
@@ -1101,28 +1208,37 @@ def get_user_ignore_path() -> Optional[Path]:
         return base / 'britfix' / 'ignore'
 
 
-# Cache for ignore lookups by directory path
-_ignore_cache: Dict[str, Tuple[Set[str], Dict[str, Set[str]]]] = {}
+# Cache for ignore lookups by directory path. Each value is the 4-tuple
+# returned by parse_britfixignore: global_words, scoped_words, global_phrases,
+# scoped_phrases.
+IgnoreRules = Tuple[Set[str], Dict[str, Set[str]], Set[str], Dict[str, Set[str]]]
+_ignore_cache: Dict[str, IgnoreRules] = {}
 
 
-def _merge_ignores(
-    base: Tuple[Set[str], Dict[str, Set[str]]],
-    overlay: Tuple[Set[str], Dict[str, Set[str]]],
-) -> Tuple[Set[str], Dict[str, Set[str]]]:
-    """Merge two ignore tuples additively (union)."""
-    merged_global = base[0] | overlay[0]
-    merged_scoped: Dict[str, Set[str]] = {}
-    for key in set(base[1].keys()) | set(overlay[1].keys()):
-        merged_scoped[key] = base[1].get(key, set()) | overlay[1].get(key, set())
-    return merged_global, merged_scoped
+def _merge_scoped(base: Dict[str, Set[str]], overlay: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+    merged: Dict[str, Set[str]] = {}
+    for key in set(base.keys()) | set(overlay.keys()):
+        merged[key] = base.get(key, set()) | overlay.get(key, set())
+    return merged
 
 
-def discover_ignore_words(file_path: str) -> Tuple[Set[str], Dict[str, Set[str]]]:
-    """Discover .britfixignore words for a given file.
+def _merge_ignores(base: IgnoreRules, overlay: IgnoreRules) -> IgnoreRules:
+    """Merge two ignore-rule tuples additively (union)."""
+    return (
+        base[0] | overlay[0],
+        _merge_scoped(base[1], overlay[1]),
+        base[2] | overlay[2],
+        _merge_scoped(base[3], overlay[3]),
+    )
+
+
+def discover_ignore_words(file_path: str) -> IgnoreRules:
+    """Discover .britfixignore rules for a given file.
 
     Walks up from the file's directory to the nearest .git boundary or
     Path.home(), collects .britfixignore files root->leaf, merges with
-    user config. Results are cached by directory.
+    user config. Returns ``(global_words, scoped_words, global_phrases,
+    scoped_phrases)``. Results are cached by directory.
     """
     resolved = Path(file_path).resolve()
     file_dir = resolved.parent if resolved.is_file() or not resolved.exists() else resolved
@@ -1166,7 +1282,7 @@ def discover_ignore_words(file_path: str) -> Tuple[Set[str], Dict[str, Set[str]]
             ignore_files.append(candidate)
 
     # Start with user config
-    result: Tuple[Set[str], Dict[str, Set[str]]] = (set(), {})
+    result: IgnoreRules = (set(), {}, set(), {})
     user_path = get_user_ignore_path()
     if user_path and user_path.is_file():
         try:
@@ -1264,14 +1380,14 @@ def filter_dictionary(
     return {k: v for k, v in dictionary.items() if k.lower() not in expanded}
 
 
-# Cache for correctors keyed by (dict_id, strategy_name, frozenset(global), frozenset(scoped)).
-# Uses id() for the dictionary — safe because the dictionary object is kept alive
-# for the entire CLI run, so the id cannot be reused by a different object.
-# Global and scoped ignores are kept as separate frozensets in the key so that
-# wildcard tokens like ``*`` (which have different semantics in each scope —
-# global ``*`` is dropped, scoped ``json:*`` disables a strategy) cannot
-# collide in the cache.
-_corrector_cache: Dict[Tuple[int, str, frozenset, frozenset], SpellingCorrector] = {}
+# Cache for correctors keyed by (dict_id, strategy_name, frozensets of each
+# ignore-rule kind). Uses id() for the dictionary — safe because the dictionary
+# object is kept alive for the entire CLI run, so the id cannot be reused by a
+# different object. Global and scoped sets are kept separate so that wildcard
+# tokens like ``*`` (whose semantics differ between scopes) cannot collide.
+_corrector_cache: Dict[
+    Tuple[int, str, frozenset, frozenset, frozenset, frozenset], SpellingCorrector
+] = {}
 
 
 def get_corrector_for_strategy(
@@ -1279,20 +1395,33 @@ def get_corrector_for_strategy(
     global_ignores: Set[str],
     scoped_ignores: Dict[str, Set[str]],
     strategy_name: str,
+    global_phrases: Optional[Set[str]] = None,
+    scoped_phrases: Optional[Dict[str, Set[str]]] = None,
 ) -> SpellingCorrector:
-    """Get a (cached) SpellingCorrector with ignored words filtered out."""
+    """Get a (cached) SpellingCorrector with ignored words filtered out and
+    quoted phrases configured for in-text masking."""
     strategy_ignores = scoped_ignores.get(strategy_name, set())
+    g_phrases = global_phrases or set()
+    s_phrases = (scoped_phrases or {}).get(strategy_name, set())
+    effective_phrases = g_phrases | s_phrases
 
+    # Phrases are matched case-insensitively, so canonicalise on lowercase for
+    # the cache key. Two phrase sets that differ only in casing produce the
+    # same corrector behaviour and should share a cache entry. Original casing
+    # is preserved in the corrector itself (and ultimately in the matched
+    # span's output) regardless of what's in the cache key.
     cache_key = (
         id(base_dictionary),
         strategy_name,
         frozenset(global_ignores),
         frozenset(strategy_ignores),
+        frozenset(p.lower() for p in g_phrases),
+        frozenset(p.lower() for p in s_phrases),
     )
     if cache_key in _corrector_cache:
         return _corrector_cache[cache_key]
 
     filtered = filter_dictionary(base_dictionary, global_ignores, scoped_ignores, strategy_name)
-    corrector = SpellingCorrector(filtered)
+    corrector = SpellingCorrector(filtered, phrases=effective_phrases)
     _corrector_cache[cache_key] = corrector
     return corrector

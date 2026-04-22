@@ -327,17 +327,29 @@ Examples:
         content = sys.stdin.read()
 
         # For stdin, use only user-level ignore with "text" strategy
-        stdin_global = set()
+        stdin_global: set = set()
         stdin_scoped: dict = {}
+        stdin_global_phrases: set = set()
+        stdin_scoped_phrases: dict = {}
         user_ignore_path = get_user_ignore_path()
         if user_ignore_path and user_ignore_path.is_file():
             try:
                 user_content = user_ignore_path.read_text(encoding='utf-8')
-                stdin_global, stdin_scoped = parse_britfixignore(user_content)
+                (
+                    stdin_global,
+                    stdin_scoped,
+                    stdin_global_phrases,
+                    stdin_scoped_phrases,
+                ) = parse_britfixignore(user_content)
             except (OSError, UnicodeDecodeError):
                 pass
         stdin_corrector = get_corrector_for_strategy(
-            american_to_british, stdin_global, stdin_scoped, 'text'
+            american_to_british,
+            stdin_global,
+            stdin_scoped,
+            'text',
+            global_phrases=stdin_global_phrases,
+            scoped_phrases=stdin_scoped_phrases,
         )
 
         if args.interactive:
@@ -384,10 +396,17 @@ Examples:
             strategy = get_file_strategy(ext)
             strategy_name = get_file_strategy_name(ext)
 
-            # Discover ignore words for this file (cached by directory)
-            file_global, file_scoped = discover_ignore_words(filepath)
+            # Discover ignore rules for this file (cached by directory)
+            file_global, file_scoped, file_global_phrases, file_scoped_phrases = (
+                discover_ignore_words(filepath)
+            )
             file_corrector = get_corrector_for_strategy(
-                american_to_british, file_global, file_scoped, strategy_name
+                american_to_british,
+                file_global,
+                file_scoped,
+                strategy_name,
+                global_phrases=file_global_phrases,
+                scoped_phrases=file_scoped_phrases,
             )
 
             # Process the file
