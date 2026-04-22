@@ -1633,7 +1633,7 @@ class TestJsonInteractiveFallback:
 class TestJSONStrategyMalformed:
     """Malformed JSON must be left untouched, with a stderr warning."""
 
-    def test_malformed_json_left_unchanged(self, corrector, capsys):
+    def test_malformed_json_left_unchanged(self, corrector):
         # Trailing comma makes this invalid JSON; contains American spellings
         # in both keys and values that the old fallback would have rewritten.
         content = '{\n  "color": "organized",\n  "behavior": 1,\n}\n'

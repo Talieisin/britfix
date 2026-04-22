@@ -742,7 +742,7 @@ class JSONStrategy(FileProcessingStrategy):
                 file=sys.stderr,
             )
             return content, {}
-    
+
     def _process_json_value(self, value, corrector: SpellingCorrector, change_tracker: defaultdict):
         """Recursively process JSON values."""
         if isinstance(value, dict):
