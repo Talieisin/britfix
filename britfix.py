@@ -117,8 +117,7 @@ def create_backup(filepath: str) -> str:
 
 
 def group_replacements_by_word(replacements: list) -> list:
-    """Group replacements by their lowercased original word, preserving
-    insertion order.
+    """Group replacements by their lowercased original word, preserving insertion order.
 
     Returns a list of ``(lowercased_original, [replacements])`` tuples.
     """
