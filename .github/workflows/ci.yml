@@ -1,0 +1,10 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    uses: Talieisin/.github/.github/workflows/ci-uv.yml@main
+    secrets: inherit
