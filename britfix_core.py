@@ -277,6 +277,22 @@ class MarkdownStrategy(FileProcessingStrategy):
             indent += 1
         return line_start + indent < len(content) and content[line_start + indent] == '>'
 
+    def _inside_open_html_tag(self, content: str, region_start: int, pos: int) -> bool:
+        """
+        Return True if pos sits inside an unclosed HTML tag opened within
+        content[region_start:pos]. Used to stop blockquote detection from
+        firing on a `>` that is actually the closing bracket of a multi-line
+        tag whose attributes span lines.
+        """
+        last_lt = content.rfind('<', region_start, pos)
+        if last_lt == -1:
+            return False
+        next_char = content[last_lt + 1:last_lt + 2]
+        if not (next_char.isalpha() or next_char == '/'):
+            return False
+        last_gt = content.rfind('>', region_start, pos)
+        return last_gt < last_lt
+
     def _find_indented_block_end(self, content: str, start: int) -> int:
         """
         Find end of indented code block (4 spaces or 1 tab).
@@ -414,7 +430,8 @@ class MarkdownStrategy(FileProcessingStrategy):
                     if content[next_char_pos:next_char_pos + 4] == '    ' or content[next_char_pos] == '\t':
                         next_code = min(next_code, next_char_pos)
                         break
-                    if self._line_is_blockquote(content, next_char_pos):
+                    if self._line_is_blockquote(content, next_char_pos) \
+                            and not self._inside_open_html_tag(content, i, newline_pos):
                         next_code = min(next_code, next_char_pos)
                         break
                 pos = newline_pos + 1
