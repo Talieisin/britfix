@@ -395,6 +395,55 @@ Normal color text."""
         assert "~7" in result
         assert "analysed" in result
 
+    # === HTML TAGS ===
+
+    def test_html_attribute_value_preserved(self, strategy, corrector):
+        """Values inside HTML attributes must not be corrected (e.g. align="center")."""
+        text = '<p align="center">The center</p>'
+        result, changes = strategy.process(text, corrector)
+        assert 'align="center"' in result, f"Attribute value was converted: {result}"
+        assert '>The centre<' in result, f"Prose inside tag was not converted: {result}"
+
+    def test_prose_around_html_tags_still_corrected(self, strategy, corrector):
+        """Prose outside HTML tags should still be converted normally."""
+        text = 'Before color <span>inside color</span> after color.'
+        result, changes = strategy.process(text, corrector)
+        assert 'Before colour ' in result
+        assert '>inside colour<' in result
+        assert ' after colour.' in result
+
+    def test_bare_angle_brackets_in_prose_not_treated_as_tag(self, strategy, corrector):
+        """A bare `<` or `>` in prose should not be confused with an HTML tag."""
+        text = "If 3 < 5 and color then organize."
+        result, changes = strategy.process(text, corrector)
+        assert "3 < 5" in result
+        assert "colour" in result
+        assert "organise" in result
+
+    def test_self_closing_tag_attribute_preserved(self, strategy, corrector):
+        """Self-closing tags with attributes should be preserved verbatim."""
+        text = '<img alt="color" src="x.png" /> and the color is blue.'
+        result, changes = strategy.process(text, corrector)
+        assert '<img alt="color" src="x.png" />' in result, \
+            f"Self-closing tag was modified: {result}"
+        assert "the colour is blue" in result
+
+    def test_multiline_tag_body_preserved(self, strategy, corrector):
+        """HTML tags whose attributes span multiple lines should still be preserved."""
+        text = '<div\n  class="color"\n  id="main"\n>inside color</div>'
+        result, changes = strategy.process(text, corrector)
+        assert 'class="color"' in result, f"Multi-line tag attribute was modified: {result}"
+        assert 'id="main"' in result
+        assert '>inside colour<' in result
+
+    def test_markdown_autolink_preserved(self, strategy, corrector):
+        """Markdown autolinks like <http://...> happen to match the tag pattern and should be preserved."""
+        text = '<http://color.com> and color.'
+        result, changes = strategy.process(text, corrector)
+        assert '<http://color.com>' in result, \
+            f"Autolink URL was converted: {result}"
+        assert 'and colour.' in result
+
     # === BLOCKQUOTES ===
 
     def test_blockquote_line_preserved(self, strategy, corrector):

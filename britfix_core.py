@@ -402,12 +402,24 @@ class MarkdownStrategy(FileProcessingStrategy):
                 next_code = min(next_code, tilde_pos)
 
             # Look for potential indented code block (newline followed by 4 spaces or tab)
-            # or blockquote line (newline followed by optional spaces then >)
+            # or blockquote line (newline followed by optional spaces then >).
+            # Track the last `<` and `>` seen so we can tell whether a `>` at line
+            # start is actually the closing bracket of a multi-line HTML tag.
+            # Updating state incrementally keeps the scan O(n) over the segment.
             pos = i
+            last_lt = -1
+            last_gt = -1
             while pos < next_code:
                 newline_pos = content.find('\n', pos)
                 if newline_pos == -1 or newline_pos >= next_code:
                     break
+                # Fold any `<` / `>` in content[pos:newline_pos] into running state
+                chunk_lt = content.rfind('<', pos, newline_pos)
+                if chunk_lt != -1:
+                    last_lt = chunk_lt
+                chunk_gt = content.rfind('>', pos, newline_pos)
+                if chunk_gt != -1:
+                    last_gt = chunk_gt
                 # Check if next line starts with indent or is a blockquote
                 next_char_pos = newline_pos + 1
                 if next_char_pos < len(content):
@@ -415,8 +427,16 @@ class MarkdownStrategy(FileProcessingStrategy):
                         next_code = min(next_code, next_char_pos)
                         break
                     if self._line_is_blockquote(content, next_char_pos):
-                        next_code = min(next_code, next_char_pos)
-                        break
+                        # Suppress blockquote detection if we're inside an
+                        # unclosed HTML tag opened earlier in this segment.
+                        inside_open_tag = False
+                        if last_lt > last_gt:
+                            nc = content[last_lt + 1:last_lt + 2]
+                            if nc.isalpha() or nc == '/':
+                                inside_open_tag = True
+                        if not inside_open_tag:
+                            next_code = min(next_code, next_char_pos)
+                            break
                 pos = newline_pos + 1
 
             # Process text up to next code delimiter, skipping HTML tags
