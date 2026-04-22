@@ -736,9 +736,12 @@ class JSONStrategy(FileProcessingStrategy):
             total_changes = defaultdict(int)
             self._process_json_value(data, corrector, total_changes)
             return json.dumps(data, indent=2, ensure_ascii=False), dict(total_changes)
-        except json.JSONDecodeError:
-            # Fall back to plain text processing
-            return corrector.correct_text(content)
+        except json.JSONDecodeError as e:
+            print(
+                f"britfix: skipping malformed JSON ({e.msg} at line {e.lineno}, column {e.colno})",
+                file=sys.stderr,
+            )
+            return content, {}
     
     def _process_json_value(self, value, corrector: SpellingCorrector, change_tracker: defaultdict):
         """Recursively process JSON values."""

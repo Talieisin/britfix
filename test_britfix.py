@@ -1630,5 +1630,34 @@ class TestJsonInteractiveFallback:
             assert strategy_cls().supports_interactive
 
 
+class TestJSONStrategyMalformed:
+    """Malformed JSON must be left untouched, with a stderr warning."""
+
+    def test_malformed_json_left_unchanged(self, corrector, capsys):
+        # Trailing comma makes this invalid JSON; contains American spellings
+        # in both keys and values that the old fallback would have rewritten.
+        content = '{\n  "color": "organized",\n  "behavior": 1,\n}\n'
+        strategy = JSONStrategy()
+        result, changes = strategy.process(content, corrector)
+        assert result == content
+        assert changes == {}
+
+    def test_malformed_json_emits_stderr_warning(self, corrector, capsys):
+        content = '{ not valid json'
+        strategy = JSONStrategy()
+        strategy.process(content, corrector)
+        captured = capsys.readouterr()
+        assert "britfix: skipping malformed JSON" in captured.err
+
+    def test_valid_json_still_processed(self, corrector):
+        # Sanity check that the happy path is intact after the fallback removal.
+        content = '{"description": "The color was analyzed"}'
+        strategy = JSONStrategy()
+        result, changes = strategy.process(content, corrector)
+        assert "colour" in result
+        assert "analysed" in result
+        assert "color" in changes
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
