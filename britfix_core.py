@@ -115,7 +115,18 @@ class SpellingCorrector:
     def _restore_phrases(self, text: str, originals: List[str]) -> str:
         if not originals:
             return text
-        return _PHRASE_PLACEHOLDER_RE.sub(lambda m: originals[int(m.group(1))], text)
+
+        def restore(match):
+            idx = int(match.group(1))
+            # Guard against the (vanishingly unlikely) case where user content
+            # already contained the delimiter pattern with a bogus index. Leave
+            # such matches untouched rather than IndexError-ing or rewriting
+            # unrelated text.
+            if 0 <= idx < len(originals):
+                return originals[idx]
+            return match.group(0)
+
+        return _PHRASE_PLACEHOLDER_RE.sub(restore, text)
 
     def _phrase_spans(self, text: str) -> List[Tuple[int, int]]:
         """Return non-overlapping (start, end) spans of phrase matches in ``text``."""
@@ -1107,7 +1118,7 @@ def is_code_file(file_extension: str) -> bool:
 # --- .britfixignore support ---
 
 _PHRASE_LINE_RE = re.compile(r'^"([^"]+)"$')
-_SCOPED_PHRASE_LINE_RE = re.compile(r'^([A-Za-z][A-Za-z0-9_-]*):"([^"]+)"$')
+_SCOPED_PHRASE_LINE_RE = re.compile(r'^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*"([^"]+)"$')
 
 
 def parse_britfixignore(
@@ -1394,13 +1405,18 @@ def get_corrector_for_strategy(
     s_phrases = (scoped_phrases or {}).get(strategy_name, set())
     effective_phrases = g_phrases | s_phrases
 
+    # Phrases are matched case-insensitively, so canonicalise on lowercase for
+    # the cache key. Two phrase sets that differ only in casing produce the
+    # same corrector behaviour and should share a cache entry. Original casing
+    # is preserved in the corrector itself (and ultimately in the matched
+    # span's output) regardless of what's in the cache key.
     cache_key = (
         id(base_dictionary),
         strategy_name,
         frozenset(global_ignores),
         frozenset(strategy_ignores),
-        frozenset(g_phrases),
-        frozenset(s_phrases),
+        frozenset(p.lower() for p in g_phrases),
+        frozenset(p.lower() for p in s_phrases),
     )
     if cache_key in _corrector_cache:
         return _corrector_cache[cache_key]

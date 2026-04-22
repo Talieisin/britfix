@@ -1312,6 +1312,17 @@ class TestBritfixIgnorePhraseParsing:
         assert 'unknown strategy' in captured.err
         assert sp == {}
 
+    def test_scoped_phrase_allows_whitespace_around_colon(self):
+        """Whitespace around the ':' is tolerated in scoped phrases, matching
+        the existing word-parsing behaviour (`code : dialog` is also accepted)."""
+        content = 'markdown : "mini program"\nhtml :"power user"\ncss: "dark mode"\n'
+        g, s, gp, sp = parse_britfixignore(content)
+        assert sp == {
+            'markdown': {'mini program'},
+            'html': {'power user'},
+            'css': {'dark mode'},
+        }
+
 
 class TestSpellingCorrectorPhraseMasking:
     """SpellingCorrector preserves phrase matches verbatim during correction."""
@@ -1369,6 +1380,21 @@ class TestSpellingCorrectorPhraseMasking:
         assert 'favourable' in result
         assert 'mini program' in result
 
+    def test_user_text_containing_delimiter_pattern_is_safe(self, dictionary):
+        """If user content already contains the placeholder delimiter pattern
+        with an out-of-range index, restoration must leave it untouched rather
+        than IndexError or rewrite unrelated text."""
+        from britfix_core import _PHRASE_MASK_DELIM
+        corrector = SpellingCorrector(dictionary, phrases={'mini program'})
+        # Note: no phrase matches in this text, so originals=[]. The delimiter
+        # pattern with an out-of-range index appears via the user input itself.
+        bogus_placeholder = f"{_PHRASE_MASK_DELIM}9{_PHRASE_MASK_DELIM}"
+        text = f"The color is {bogus_placeholder} nice."
+        result, _ = corrector.correct_text(text)
+        # 'color' still corrected; the bogus placeholder survives unchanged.
+        assert 'colour' in result
+        assert bogus_placeholder in result
+
 
 class TestPhraseIntegration:
     """End-to-end: .britfixignore phrase entries flow through to correction."""
@@ -1421,6 +1447,20 @@ class TestPhraseIntegration:
             global_phrases={'open program'}, scoped_phrases={},
         )
         assert a is not b
+
+    def test_corrector_cache_normalises_phrase_casing(self, dictionary):
+        """Phrases that differ only in case match identically (case-insensitive)
+        and so must share a cache entry rather than producing duplicates."""
+        _corrector_cache.clear()
+        a = get_corrector_for_strategy(
+            dictionary, set(), {}, 'text',
+            global_phrases={'Mini Program'}, scoped_phrases={},
+        )
+        b = get_corrector_for_strategy(
+            dictionary, set(), {}, 'text',
+            global_phrases={'mini program'}, scoped_phrases={},
+        )
+        assert a is b
 
     def test_end_to_end_phrase_in_britfixignore(self, tmp_path, dictionary):
         _ignore_cache.clear()
