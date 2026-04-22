@@ -61,8 +61,12 @@ Different file types are handled by different strategies, configured in `config.
 | **latex** | `.tex` | Skip LaTeX commands and math |
 | **html** | `.html`, `.htm`, `.xml` | Skip HTML tags and `<style>`/`<script>` content |
 | **css** | `.css`, `.scss`, `.sass`, `.less` | Only convert comments |
-| **json** | `.json` | Only convert string values |
+| **json** | `.json` | Only convert string values that contain whitespace (treats single-token strings as identifiers) |
 | **code** | `.py`, `.js`, `.ts`, etc. | Only convert comments and docstrings |
+
+### JSON File Handling
+
+JSON values are corrected only when they contain whitespace. Single-token strings — `"center"`, `"colorScheme"`, `"src/Color.tsx"` — are treated as identifiers and left alone, since most JSON values in config files are programmatic, not prose. Multi-word values like `"The organization was reorganized"` are still corrected normally.
 
 ### Code File Handling
 

@@ -1746,5 +1746,77 @@ class TestJSONStrategyMalformed:
         assert "color" in changes
 
 
+class TestJSONStrategyHeuristic:
+    """JSON values without whitespace are treated as identifiers and skipped.
+
+    Config files store overwhelmingly programmatic strings (CSS values, paths,
+    camelCase identifiers). Correcting them silently breaks downstream tools.
+    """
+
+    @pytest.fixture
+    def strategy(self):
+        return JSONStrategy()
+
+    def test_single_word_values_unchanged(self, strategy, corrector):
+        """Identifier-like values (no whitespace) must not be corrected."""
+        content = '{"colorScheme": "dark", "textAlign": "center"}'
+        result, changes = strategy.process(content, corrector)
+        assert '"center"' in result
+        assert '"dark"' in result
+        # Keys are also untouched (existing behaviour)
+        assert '"colorScheme"' in result
+        assert '"textAlign"' in result
+        assert changes == {}
+
+    def test_prose_values_corrected(self, strategy, corrector):
+        """Multi-word prose values still get British spellings."""
+        content = '{"description": "The organization was well organized"}'
+        result, changes = strategy.process(content, corrector)
+        assert "organisation" in result
+        assert "organised" in result
+        assert "organization" in changes
+
+    def test_single_word_prose_skipped_documents_tradeoff(self, strategy, corrector):
+        """A single-word prose value is skipped — known trade-off of the heuristic."""
+        content = '{"label": "organized"}'
+        result, changes = strategy.process(content, corrector)
+        assert '"organized"' in result
+        assert changes == {}
+
+    def test_path_like_values_unchanged(self, strategy, corrector):
+        """Paths and dotted identifiers are skipped (no whitespace)."""
+        content = '{"path": "src/Color.tsx", "module": "ui.color.scheme"}'
+        result, changes = strategy.process(content, corrector)
+        assert '"src/Color.tsx"' in result
+        assert '"ui.color.scheme"' in result
+        assert changes == {}
+
+    def test_heuristic_applies_to_nested_objects(self, strategy, corrector):
+        """The whitespace gate must apply at every depth."""
+        content = '{"outer": {"inner": "color", "prose": "The color is nice"}}'
+        result, changes = strategy.process(content, corrector)
+        assert '"color"' in result  # single-word inner skipped
+        assert "colour is nice" in result  # multi-word inner corrected
+        assert changes.get("color") == 1
+
+    def test_heuristic_applies_to_arrays(self, strategy, corrector):
+        """The whitespace gate must apply inside arrays too."""
+        content = '{"items": ["color", "behavior", "The color is nice"]}'
+        result, changes = strategy.process(content, corrector)
+        assert '"color"' in result
+        assert '"behavior"' in result
+        assert "colour is nice" in result
+        assert changes.get("color") == 1
+        assert "behavior" not in changes
+
+    def test_tab_and_newline_count_as_whitespace(self, strategy, corrector):
+        """Any whitespace character — not just space — qualifies a value as prose."""
+        content = '{"a": "color\\tbehavior", "b": "color\\nbehavior"}'
+        result, changes = strategy.process(content, corrector)
+        # Both should be corrected because they contain whitespace
+        assert "colour" in result
+        assert "behaviour" in result
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

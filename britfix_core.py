@@ -744,23 +744,31 @@ class JSONStrategy(FileProcessingStrategy):
             return content, {}
 
     def _process_json_value(self, value, corrector: SpellingCorrector, change_tracker: defaultdict):
-        """Recursively process JSON values."""
+        """Recursively process JSON values.
+
+        Only string values containing whitespace are corrected. Single-token
+        strings are treated as identifiers (config values, CSS keywords, paths,
+        camelCase / snake_case names) and skipped. This avoids silently
+        rewriting programmatic values like "center" or "colorScheme".
+        """
         if isinstance(value, dict):
             for k, v in value.items():
                 if isinstance(v, str):
-                    corrected, changes = corrector.correct_text(v)
-                    value[k] = corrected
-                    for word, count in changes.items():
-                        change_tracker[word] += count
+                    if any(c.isspace() for c in v):
+                        corrected, changes = corrector.correct_text(v)
+                        value[k] = corrected
+                        for word, count in changes.items():
+                            change_tracker[word] += count
                 else:
                     self._process_json_value(v, corrector, change_tracker)
         elif isinstance(value, list):
             for i, item in enumerate(value):
                 if isinstance(item, str):
-                    corrected, changes = corrector.correct_text(item)
-                    value[i] = corrected
-                    for word, count in changes.items():
-                        change_tracker[word] += count
+                    if any(c.isspace() for c in item):
+                        corrected, changes = corrector.correct_text(item)
+                        value[i] = corrected
+                        for word, count in changes.items():
+                            change_tracker[word] += count
                 else:
                     self._process_json_value(item, corrector, change_tracker)
 
