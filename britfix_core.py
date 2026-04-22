@@ -393,13 +393,21 @@ class MarkdownStrategy(FileProcessingStrategy):
                         break
                 pos = newline_pos + 1
 
-            # Process text up to next code delimiter
+            # Process text up to next code delimiter, skipping HTML tags
             segment = content[i:next_code]
             if segment:
-                corrected, changes = corrector.correct_text(segment)
-                result.append(corrected)
-                for word, count in changes.items():
-                    total_changes[word] += count
+                # Split on HTML tags so attribute values aren't corrected
+                # Require tag-like structure: < then letter or / to avoid matching bare < in prose
+                tag_pattern = r'(</?[a-zA-Z][^>]*>)'
+                parts = re.split(tag_pattern, segment)
+                for idx, part in enumerate(parts):
+                    if idx % 2 == 0:  # Text outside tags
+                        corrected, changes = corrector.correct_text(part)
+                        result.append(corrected)
+                        for word, count in changes.items():
+                            total_changes[word] += count
+                    else:  # HTML tag — preserve unchanged
+                        result.append(part)
 
             # If we're at a delimiter that wasn't handled as a code block
             # (e.g., tilde not at line start like "~7 days"), just add it and advance
