@@ -266,6 +266,17 @@ class MarkdownStrategy(FileProcessingStrategy):
 
         return -1
 
+    def _line_is_blockquote(self, content: str, line_start: int) -> bool:
+        """
+        Check if the line beginning at line_start is a blockquote line.
+        A blockquote line starts with > after up to 3 spaces of indentation.
+        4+ spaces is an indented code block, not a blockquote.
+        """
+        indent = 0
+        while indent < 3 and line_start + indent < len(content) and content[line_start + indent] == ' ':
+            indent += 1
+        return line_start + indent < len(content) and content[line_start + indent] == '>'
+
     def _find_indented_block_end(self, content: str, start: int) -> int:
         """
         Find end of indented code block (4 spaces or 1 tab).
@@ -345,6 +356,17 @@ class MarkdownStrategy(FileProcessingStrategy):
                     i = block_end
                     continue
 
+            # Check for blockquote lines (> after up to 3 spaces of indent)
+            # Preserve the entire line unchanged — quoted text should be verbatim.
+            if self._is_at_line_start(content, i) and self._line_is_blockquote(content, i):
+                line_end = content.find('\n', i)
+                if line_end == -1:
+                    result.append(content[i:])
+                    break
+                result.append(content[i:line_end + 1])
+                i = line_end + 1
+                continue
+
             # Check for inline code spans (backticks)
             if content[i] == '`':
                 # Count consecutive backticks
@@ -380,15 +402,19 @@ class MarkdownStrategy(FileProcessingStrategy):
                 next_code = min(next_code, tilde_pos)
 
             # Look for potential indented code block (newline followed by 4 spaces or tab)
+            # or blockquote line (newline followed by optional spaces then >)
             pos = i
             while pos < next_code:
                 newline_pos = content.find('\n', pos)
                 if newline_pos == -1 or newline_pos >= next_code:
                     break
-                # Check if next line starts with indent
+                # Check if next line starts with indent or is a blockquote
                 next_char_pos = newline_pos + 1
                 if next_char_pos < len(content):
                     if content[next_char_pos:next_char_pos + 4] == '    ' or content[next_char_pos] == '\t':
+                        next_code = min(next_code, next_char_pos)
+                        break
+                    if self._line_is_blockquote(content, next_char_pos):
                         next_code = min(next_code, next_char_pos)
                         break
                 pos = newline_pos + 1
