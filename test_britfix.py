@@ -596,6 +596,21 @@ More color."""
         assert 'href="https://example.com/organized"' in result
         assert "for colour" in result
 
+    def test_wikipedia_style_url_with_nested_parens_preserved(self, strategy, corrector):
+        """A wiki-style URL with a single nested `(…)` preserves correctly.
+
+        The regex stops at the first `)`, which closes the inner parenthesised
+        segment; the stray outer `)` falls through as prose with nothing to
+        correct. URLs with deeper nesting or unescaped trailing parens are
+        declared out of scope, but this common case is pinned here so a future
+        tightening of the regex doesn't silently regress it.
+        """
+        text = "See [Link](https://en.wikipedia.org/wiki/Link_(organized)) for color."
+        result, changes = strategy.process(text, corrector)
+        assert "wiki/Link_(organized)" in result
+        assert "organised" not in result
+        assert "for colour" in result
+
 
 class TestMarkdownStrategyMapping:
     """Test that markdown file extensions map to MarkdownStrategy."""
