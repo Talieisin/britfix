@@ -516,13 +516,23 @@ class MarkdownStrategy(FileProcessingStrategy):
                 # Split on HTML tags so attribute values aren't corrected
                 # Require tag-like structure: < then letter or / to avoid matching bare < in prose
                 tag_pattern = r'(</?[a-zA-Z][^>]*>)'
+                # Split on markdown link targets `](url)` (optional title inside) so
+                # URLs aren't corrected. Matches `](...)` where `...` has no `)`.
+                # Preserves the `](url)` / `](url "title")` span; the preceding `[text`
+                # stays in prose so link text is still corrected.
+                link_target_pattern = r'(\]\([^)]*\))'
                 parts = re.split(tag_pattern, segment)
                 for idx, part in enumerate(parts):
                     if idx % 2 == 0:  # Text outside tags
-                        corrected, changes = corrector.correct_text(part)
-                        result.append(corrected)
-                        for word, count in changes.items():
-                            total_changes[word] += count
+                        link_parts = re.split(link_target_pattern, part)
+                        for lidx, lpart in enumerate(link_parts):
+                            if lidx % 2 == 0:  # Prose around link targets
+                                corrected, changes = corrector.correct_text(lpart)
+                                result.append(corrected)
+                                for word, count in changes.items():
+                                    total_changes[word] += count
+                            else:  # Link target `](url)` — preserve unchanged
+                                result.append(lpart)
                     else:  # HTML tag — preserve unchanged
                         result.append(part)
 
