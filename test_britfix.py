@@ -528,6 +528,89 @@ More color."""
         assert '> "Closing quote with organization."' in result
         assert "Leading colour prose." in result
 
+    # === MARKDOWN LINK TARGETS ===
+
+    def test_link_url_preserved(self, strategy, corrector):
+        """URL inside a markdown link target should not be corrected."""
+        text = "See [the talk](https://example.com/modeled-on-the-bar-exam/) for details."
+        result, changes = strategy.process(text, corrector)
+        assert "https://example.com/modeled-on-the-bar-exam/" in result
+        assert "modelled-on" not in result
+
+    def test_link_text_still_corrected(self, strategy, corrector):
+        """Link text should still be corrected; only the target is preserved."""
+        text = "[The organized guide](https://example.com/page) explains color."
+        result, changes = strategy.process(text, corrector)
+        assert "[The organised guide]" in result
+        assert "(https://example.com/page)" in result
+        assert "explains colour" in result
+
+    def test_link_title_preserved(self, strategy, corrector):
+        """A link title inside the parens should be preserved."""
+        text = '[text](https://example.com/color "the color page") then color prose.'
+        result, changes = strategy.process(text, corrector)
+        assert '(https://example.com/color "the color page")' in result
+        assert "then colour prose" in result
+
+    def test_image_syntax_url_preserved(self, strategy, corrector):
+        """Image syntax ![alt](url) should preserve the URL."""
+        text = "![organized diagram](https://example.com/organized-chart.png) is color-coded."
+        result, changes = strategy.process(text, corrector)
+        assert "(https://example.com/organized-chart.png)" in result
+        assert "is colour-coded" in result
+
+    def test_multiple_links_on_one_line(self, strategy, corrector):
+        """Multiple links on the same line should each have their URLs preserved."""
+        text = "Read [one](https://a.com/organized) and [two](https://b.com/analyzed) then color."
+        result, changes = strategy.process(text, corrector)
+        assert "(https://a.com/organized)" in result
+        assert "(https://b.com/analyzed)" in result
+        assert "then colour" in result
+
+    def test_link_inside_fenced_code_block_preserved_wholesale(self, strategy, corrector):
+        """A link inside a fenced code block is preserved by the code-block handler; nothing is corrected."""
+        text = "```\n[text](https://example.com/organized) and color\n```\n\nThe color works."
+        result, changes = strategy.process(text, corrector)
+        assert "[text](https://example.com/organized) and color" in result  # Inside fence, untouched
+        assert "The colour works" in result  # Prose after fence, corrected
+
+    def test_link_inside_blockquote_preserved_wholesale(self, strategy, corrector):
+        """A link inside a blockquote line is preserved verbatim (blockquote wins)."""
+        text = "> See [the talk](https://example.com/organized) for color.\n\nNormal color prose."
+        result, changes = strategy.process(text, corrector)
+        assert "> See [the talk](https://example.com/organized) for color." in result
+        assert "Normal colour prose" in result
+
+    def test_link_with_inline_code_in_text_preserves_url(self, strategy, corrector):
+        """A link whose text contains inline code still preserves the URL in the following segment."""
+        text = "Call [`colorize`](https://example.com/organized-api) to color things."
+        result, changes = strategy.process(text, corrector)
+        assert "`colorize`" in result  # Inline code untouched
+        assert "(https://example.com/organized-api)" in result  # URL preserved via later segment
+        assert "to colour things" in result  # Trailing prose corrected
+
+    def test_html_anchor_url_preserved(self, strategy, corrector):
+        """HTML <a href=\"...\"> URLs remain preserved via the HTML-tag skip (regression guard)."""
+        text = '<a href="https://example.com/organized">click</a> for color.'
+        result, changes = strategy.process(text, corrector)
+        assert 'href="https://example.com/organized"' in result
+        assert "for colour" in result
+
+    def test_wikipedia_style_url_with_nested_parens_preserved(self, strategy, corrector):
+        """A wiki-style URL with a single nested `(…)` preserves correctly.
+
+        The regex stops at the first `)`, which closes the inner parenthesised
+        segment; the stray outer `)` falls through as prose with nothing to
+        correct. URLs with deeper nesting or unescaped trailing parens are
+        declared out of scope, but this common case is pinned here so a future
+        tightening of the regex doesn't silently regress it.
+        """
+        text = "See [Link](https://en.wikipedia.org/wiki/Link_(organized)) for color."
+        result, changes = strategy.process(text, corrector)
+        assert "wiki/Link_(organized)" in result
+        assert "organised" not in result
+        assert "for colour" in result
+
 
 class TestMarkdownStrategyMapping:
     """Test that markdown file extensions map to MarkdownStrategy."""
