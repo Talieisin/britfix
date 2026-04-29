@@ -675,6 +675,43 @@ class TestLanguageSpecificComments:
         assert "behaviour" in result
 
 
+class TestRustAttributesAndShebangs:
+    """Rust attribute syntax (#[...], #![...]) and file-leading shebangs
+    must not be classified as #-prefixed line comments. See issue #33."""
+
+    @pytest.fixture
+    def strategy(self):
+        return CodeStrategy()
+
+    def test_rust_derive_attribute_preserved(self, strategy, corrector):
+        code = "#[derive(Debug, Clone, Serialize)]"
+        result, _ = strategy.process(code, corrector)
+        assert result == code
+
+    def test_rust_inner_attribute_preserved(self, strategy, corrector):
+        code = '#![cfg_attr(feature = "serde", derive(Serialize))]'
+        result, _ = strategy.process(code, corrector)
+        assert result == code
+
+    def test_mixed_rust_attribute_and_doc_comment(self, strategy, corrector):
+        code = "#[derive(Serialize)]\n// The behavior is favorable"
+        result, _ = strategy.process(code, corrector)
+        assert "#[derive(Serialize)]" in result
+        assert "behaviour is favourable" in result
+
+    def test_shebang_preserved_but_hash_comment_below_converted(self, strategy, corrector):
+        code = "#!/usr/bin/env python3\n# The behavior is favorable"
+        result, _ = strategy.process(code, corrector)
+        assert result.startswith("#!/usr/bin/env python3")
+        assert "behaviour is favourable" in result
+
+    def test_mid_line_hash_bang_still_treated_as_comment(self, strategy, corrector):
+        # `#!` not at offset 0 is a real comment in Python/Ruby/shell.
+        code = "x = 1  #! The behavior is favorable"
+        result, _ = strategy.process(code, corrector)
+        assert "behaviour is favourable" in result
+
+
 class TestEdgeCases:
     """Edge cases and tricky scenarios."""
     
