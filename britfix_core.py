@@ -864,6 +864,34 @@ class JSONStrategy(FileProcessingStrategy):
                     self._process_json_value(item, corrector, change_tracker)
 
 
+def _is_hash_non_comment_construct(content: str, i: int) -> bool:
+    """Returns True for ``#``-prefixed tokens that are NOT line comments:
+    Rust outer/inner attributes (``#[...]``, ``#![...]``) when they are
+    the first non-whitespace token on a line, and file-leading shebangs
+    (``#!...`` at offset 0). Localised here so future per-language comment
+    handling can replace this with a syntax table.
+
+    The line-start restriction matters: an inline Python/Ruby/shell comment
+    like ``x = 1  #[TODO fix the behavior]`` is still a real comment and
+    must keep being processed. Indented Rust attributes (e.g. inside a
+    struct body) start their own line and so are still recognised.
+
+    Note: Rust raw strings (``r#"..."#``) are not handled here and remain a
+    known edge case for a future ``RustStrategy``.
+    """
+    if content[i:i+2] == '#[' or content[i:i+3] == '#![':
+        # Walk back over any leading whitespace on the current line.
+        j = i - 1
+        while j >= 0 and content[j] in (' ', '\t'):
+            j -= 1
+        # Line-start = either start of file, or the previous non-space
+        # char is a newline.
+        return j < 0 or content[j] == '\n'
+    if i == 0 and content[i:i+2] == '#!':
+        return True
+    return False
+
+
 class CodeStrategy(FileProcessingStrategy):
     """
     Process code files - only convert prose in comments and docstrings.
@@ -934,8 +962,10 @@ class CodeStrategy(FileProcessingStrategy):
                 i = end
                 continue
 
-            # Check for line comments (# or //)
-            if content[i] == '#' or content[i:i+2] == '//':
+            # Check for line comments (# or //). `#` is excluded for Rust
+            # attribute syntax and file-leading shebangs (see helper above).
+            if (content[i] == '#' and not _is_hash_non_comment_construct(content, i)) \
+                    or content[i:i+2] == '//':
                 # Find end of line
                 end = content.find('\n', i)
                 if end == -1:
