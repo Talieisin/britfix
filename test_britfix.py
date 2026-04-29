@@ -711,6 +711,24 @@ class TestRustAttributesAndShebangs:
         result, _ = strategy.process(code, corrector)
         assert "behaviour is favourable" in result
 
+    def test_mid_line_hash_bracket_still_treated_as_comment(self, strategy, corrector):
+        # Inline `#[` is a real Python/Ruby/shell comment, not a Rust attribute.
+        code = "x = 1  #[ The behavior is favorable ]"
+        result, _ = strategy.process(code, corrector)
+        assert "behaviour is favourable" in result
+
+    def test_indented_rust_attribute_preserved(self, strategy, corrector):
+        # Real Rust: attributes on struct fields are indented but still start
+        # their own line — they must NOT be processed as comments.
+        code = (
+            "pub struct Foo {\n"
+            "    #[serde(rename = \"Serialize\")]\n"
+            "    pub bar: String,\n"
+            "}\n"
+        )
+        result, _ = strategy.process(code, corrector)
+        assert '#[serde(rename = "Serialize")]' in result
+
 
 class TestEdgeCases:
     """Edge cases and tricky scenarios."""
