@@ -58,6 +58,32 @@ class TestPlainText:
         assert len(changes) == 0
 
 
+class TestOedema:
+    """'edema' must map to 'oedema', not the non-word 'edoema'.
+
+    The British form keeps the Greek 'oe' digraph at the front of the word
+    (oedema, oesophagus, oestrogen); the American form drops it. Inserting
+    the 'o' mid-word produces a spelling that exists in neither variety.
+    """
+
+    def test_edema_maps_to_oedema(self, corrector):
+        text = "Peripheral edema was noted."
+        result, changes = corrector.correct_text(text)
+        assert result == "Peripheral oedema was noted."
+        assert "edema" in changes
+
+    def test_oedema_unchanged(self, corrector):
+        text = "Peripheral oedema was noted."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+    def test_case_preserved(self, corrector):
+        text = "Edema and EDEMA"
+        result, _ = corrector.correct_text(text)
+        assert result == "Oedema and OEDEMA"
+
+
 class TestCodeStrategy:
     """CodeStrategy should only convert in comments/docstrings, not string literals."""
     
