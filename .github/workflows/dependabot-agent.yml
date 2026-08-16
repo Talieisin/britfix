@@ -1,0 +1,28 @@
+# managed-by: talieisin-org-bootstrap v1
+# Fires when the org dispatcher labels a major Dependabot PR `ai-upgrade`.
+# All logic lives in Talieisin/.github — see its docs/ai-automation.md.
+name: AI upgrade
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  issues: write
+  actions: read
+
+jobs:
+  upgrade:
+    if: github.event.label.name == 'ai-upgrade'
+    uses: Talieisin/.github/.github/workflows/dependabot-upgrade.yml@main
+    with:
+      setup: uv
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TALIEISIN_AUTOMATION_APP_ID: ${{ secrets.TALIEISIN_AUTOMATION_APP_ID }}
+      TALIEISIN_AUTOMATION_APP_PRIVATE_KEY: ${{ secrets.TALIEISIN_AUTOMATION_APP_PRIVATE_KEY }}
+      TALIEISIN_TRIGGER_APP_ID: ${{ secrets.TALIEISIN_TRIGGER_APP_ID }}
+      TALIEISIN_TRIGGER_APP_PRIVATE_KEY: ${{ secrets.TALIEISIN_TRIGGER_APP_PRIVATE_KEY }}
