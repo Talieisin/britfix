@@ -1,4 +1,4 @@
-# managed-by: talieisin-org-bootstrap v1
+# managed-by: talieisin-org-bootstrap v2
 # Fires when the org dispatcher labels a major Dependabot PR `ai-upgrade`.
 # All logic lives in Talieisin/.github — see its docs/ai-automation.md.
 name: AI upgrade
@@ -21,6 +21,7 @@ jobs:
       setup: uv
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      COPILOT_REVIEW_PAT: ${{ secrets.COPILOT_REVIEW_PAT }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       TALIEISIN_AUTOMATION_APP_ID: ${{ secrets.TALIEISIN_AUTOMATION_APP_ID }}
       TALIEISIN_AUTOMATION_APP_PRIVATE_KEY: ${{ secrets.TALIEISIN_AUTOMATION_APP_PRIVATE_KEY }}
