@@ -1,6 +1,7 @@
 # managed-by: talieisin-org-bootstrap v4
 # Fires when the org dispatcher labels a major Dependabot PR `ai-upgrade`.
-# All logic lives in Talieisin/.github — see its docs/ai-automation.md.
+# All logic lives in the org's shared reusable workflows; operational
+# documentation is internal.
 name: AI upgrade
 on:
   pull_request:
