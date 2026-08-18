@@ -1,0 +1,6 @@
+# managed-by: talieisin-org-bootstrap v1
+# Auto-request the maintainer's review on every PR raised here.
+# Dependabot PRs: auto-merge.yml strips this at-open request so the
+# review-requested inbox keeps meaning ready-to-merge; the AI pipeline
+# re-requests when a PR reaches ai-complete.
+* @george-elphick-talieisin
