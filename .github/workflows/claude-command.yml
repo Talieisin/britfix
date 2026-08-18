@@ -1,0 +1,22 @@
+# managed-by: talieisin-org-bootstrap v1
+# `@claude <question>` on any PR or issue comment: an unprivileged Claude
+# round researches the question against this repo and posts the answer.
+# Authorised commenters only (org variable AI_COMMAND_USERS); read-only —
+# it never changes code. All logic lives in the org's shared workflows.
+name: Claude command
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  command:
+    if: startsWith(github.event.comment.body, '@claude')
+    uses: Talieisin/.github/.github/workflows/claude-command.yml@main
+    with:
+      model: sonnet
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      TALIEISIN_AUTOMATION_APP_ID: ${{ secrets.TALIEISIN_AUTOMATION_APP_ID }}
+      TALIEISIN_AUTOMATION_APP_PRIVATE_KEY: ${{ secrets.TALIEISIN_AUTOMATION_APP_PRIVATE_KEY }}
