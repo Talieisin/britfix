@@ -10,9 +10,17 @@ on:
   pull_request_review_comment:
     types: [created]
 
+# Minimal explicit permissions: they CAP what the reusable workflow's
+# jobs may request from GITHUB_TOKEN (the answer round reads code and
+# threads; writes go through app tokens minted inside the reusable).
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
 jobs:
   command:
-    if: startsWith(github.event.comment.body, '@claude')
+    if: startsWith(github.event.comment.body, '@claude ') || github.event.comment.body == '@claude'
     uses: Talieisin/.github/.github/workflows/claude-command.yml@main
     with:
       model: sonnet
