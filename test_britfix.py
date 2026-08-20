@@ -58,6 +58,34 @@ class TestPlainText:
         assert len(changes) == 0
 
 
+class TestPractiseFamily:
+    """British 'practise' verb forms must never be converted to American 'practice'.
+
+    British English splits the pair by part of speech: 'practice' is the noun,
+    'practise' the verb. American English uses 'practice' for both. Converting
+    practise -> practice therefore runs American-ward, the opposite of this
+    tool's purpose, so the whole family is left alone.
+    """
+
+    def test_practise_verb_forms_unchanged(self, corrector):
+        text = "They practise daily; she practised and still practises."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+    def test_practising_unchanged(self, corrector):
+        text = "A practising engineer."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+    def test_practice_noun_unchanged(self, corrector):
+        text = "The practice opened last year."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+
 class TestCodeStrategy:
     """CodeStrategy should only convert in comments/docstrings, not string literals."""
     
