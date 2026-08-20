@@ -58,6 +58,60 @@ class TestPlainText:
         assert len(changes) == 0
 
 
+class TestOedema:
+    """'edema' must map to 'oedema', not the non-word 'edoema'.
+
+    The British form keeps the Greek 'oe' digraph at the front of the word
+    (oedema, oesophagus, oestrogen); the American form drops it. Inserting
+    the 'o' mid-word produces a spelling that exists in neither variety.
+    """
+
+    def test_edema_maps_to_oedema(self, corrector):
+        text = "Peripheral edema was noted."
+        result, changes = corrector.correct_text(text)
+        assert result == "Peripheral oedema was noted."
+        assert "edema" in changes
+
+    def test_oedema_unchanged(self, corrector):
+        text = "Peripheral oedema was noted."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+    def test_case_preserved(self, corrector):
+        text = "Edema and EDEMA"
+        result, _ = corrector.correct_text(text)
+        assert result == "Oedema and OEDEMA"
+
+
+class TestPractiseFamily:
+    """British 'practise' verb forms must never be converted to American 'practice'.
+
+    British English splits the pair by part of speech: 'practice' is the noun,
+    'practise' the verb. American English uses 'practice' for both. Converting
+    practice -> practice therefore runs American-ward, the opposite of this
+    tool's purpose, so the whole family is left alone.
+    """
+
+    def test_practise_verb_forms_unchanged(self, corrector):
+        text = "They practise daily; she practised and still practises."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+    def test_practising_unchanged(self, corrector):
+        text = "A practising engineer."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+    def test_practice_noun_unchanged(self, corrector):
+        text = "The practice opened last year."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+
 class TestCodeStrategy:
     """CodeStrategy should only convert in comments/docstrings, not string literals."""
     
@@ -128,8 +182,8 @@ class TestCodeStrategy:
         It optimizes behavior for better organization.
         """'''
         result, changes = strategy.process(code, corrector)
-        assert "analyses" in result or "analyzes" in result  # analyzes might be excluded
-        assert "colour" in result or "color" in result  # color might be excluded
+        assert "analyses" in result or "analyzes" in result  # analyses might be excluded
+        assert "colour" in result or "color" in result  # colour might be excluded
 
 
 class TestMarkdownStrategy:
@@ -309,7 +363,7 @@ The color works."""
     # === INDENTED CLOSING FENCES ===
 
     def test_indented_closing_fence(self, strategy, corrector):
-        """Closing fence with up to 3 spaces indentation should be recognized."""
+        """Closing fence with up to 3 spaces indentation should be recognised."""
         text = """```
 color = behavior
    ```
@@ -500,7 +554,7 @@ More color."""
 
 More color."""
         result, changes = strategy.process(text, corrector)
-        # 4 spaces makes this an indented code block — preserved anyway, so organization stays
+        # 4 spaces makes this an indented code block — preserved anyway, so organisation stays
         assert "organization" in result
         assert "Prose colour." in result
         assert "More colour." in result
@@ -789,7 +843,7 @@ class TestEdgeCases:
 
 
 class TestFileExtensions:
-    """Test that file extensions are correctly categorized."""
+    """Test that file extensions are correctly categorised."""
     
     def test_code_extensions_include_common_types(self):
         assert '.py' in CODE_EXTENSIONS
@@ -1724,7 +1778,7 @@ class TestIgnoreIntegration:
         txt_file = tmp_path / 'test.txt'
         txt_file.write_text('The color is nice\n')
 
-        # Python file: color should be ignored (code strategy)
+        # Python file: colour should be ignored (code strategy)
         g, s, _, _ = discover_ignore_words(str(py_file))
         py_corrector = get_corrector_for_strategy(dictionary, g, s, 'code')
         strategy = CodeStrategy()
@@ -1732,7 +1786,7 @@ class TestIgnoreIntegration:
         assert 'color' in result
         assert 'colour' not in result
 
-        # Text file: color should NOT be ignored (text strategy)
+        # Text file: colour should NOT be ignored (text strategy)
         _ignore_cache.clear()
         g, s, _, _ = discover_ignore_words(str(txt_file))
         txt_corrector = get_corrector_for_strategy(dictionary, g, s, 'text')
@@ -1749,7 +1803,7 @@ class TestWildcardIgnore:
         return load_spelling_mappings()
 
     def test_wildcard_expands_to_inflected_forms(self, dictionary):
-        """dialog* should ignore both 'dialog' and 'dialogs'."""
+        """dialogue* should ignore both 'dialog' and 'dialogs'."""
         filtered = filter_dictionary(dictionary, {'dialog*'}, {}, 'text')
         assert 'dialog' not in filtered
         assert 'dialogs' not in filtered
@@ -1762,7 +1816,7 @@ class TestWildcardIgnore:
         assert 'dialogs' in filtered  # Plural NOT ignored
 
     def test_wildcard_color_family(self, dictionary):
-        """color* should ignore color, colors, colored, colorful, etc."""
+        """colour* should ignore colour, colours, coloured, colourful, etc."""
         filtered = filter_dictionary(dictionary, {'color*'}, {}, 'text')
         for key in list(dictionary.keys()):
             if key.lower().startswith('color'):
@@ -1955,7 +2009,7 @@ class TestFindSafeReplacements:
         assert originals.count('color') == 2
 
     def test_code_strategy_shorter_replacement(self, corrector):
-        """CodeStrategy: shorter replacement (appall->appal) only in comment."""
+        """CodeStrategy: shorter replacement (appal->appal) only in comment."""
         code = '# appall\nname = "appall"\n'
         strategy = CodeStrategy()
         safe = strategy.find_safe_replacements(code, corrector)
@@ -1965,7 +2019,7 @@ class TestFindSafeReplacements:
         assert safe[0][0] == 2
 
     def test_code_strategy_shorter_replacement_distill(self, corrector):
-        """CodeStrategy: distill->distil only in comment, not string."""
+        """CodeStrategy: distil->distil only in comment, not string."""
         code = '# distill\nname = "distill"\n'
         strategy = CodeStrategy()
         safe = strategy.find_safe_replacements(code, corrector)
@@ -1973,7 +2027,7 @@ class TestFindSafeReplacements:
         assert safe[0][2] == 'distill'
 
     def test_code_strategy_longer_replacement_catalog(self, corrector):
-        """CodeStrategy: longer replacement (catalog->catalogue) only in comment."""
+        """CodeStrategy: longer replacement (catalogue->catalogue) only in comment."""
         code = '# catalog\nname = "catalog"\n'
         strategy = CodeStrategy()
         safe = strategy.find_safe_replacements(code, corrector)
@@ -1982,7 +2036,7 @@ class TestFindSafeReplacements:
         assert safe[0][0] == 2
 
     def test_code_strategy_longer_replacement_program(self, corrector):
-        """CodeStrategy: program->programme only in comment, not string."""
+        """CodeStrategy: programme->programme only in comment, not string."""
         code = '# program\nname = "program"\n'
         strategy = CodeStrategy()
         safe = strategy.find_safe_replacements(code, corrector)
@@ -2043,7 +2097,7 @@ class TestGroupReplacementsByWord:
         result = group_replacements_by_word([a, b, c, d])
         # 'color' first (insertion order), then 'behavior'
         assert [k for k, _ in result] == ["color", "behavior"]
-        # All three color-family replacements grouped together, in encounter order
+        # All three colour-family replacements grouped together, in encounter order
         assert result[0][1] == [a, b, d]
         assert result[1][1] == [c]
 
