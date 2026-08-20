@@ -112,6 +112,46 @@ class TestPractiseFamily:
         assert len(changes) == 0
 
 
+class TestRemovedMappings:
+    """Mappings deliberately removed from the dictionary must stay removed.
+
+    Each of these was deleted because it wasn't a genuine US-to-UK spelling
+    pair: archaic in both dialects (-gramme, waggon), distinct words/units
+    (ton/tonne, groin/groyne), identical in both dialects (licensed/licensing),
+    or running in the wrong direction (practise family). See PRs #16, #32,
+    #36, #37, #40, #41, #42, #44.
+    """
+
+    REMOVED = [
+        "gram", "grams", "kilogram", "kilograms",
+        "milligram", "milligrams", "centigram", "centigrams",
+        "ton", "tons",
+        "wagon", "wagons",
+        "licensed", "licensing",
+        "practise", "practised", "practises", "practising",
+        "groin", "groins",
+        "almanac", "almanacs", "ankle",
+        "deflection", "inflection", "inflections", "reflection",
+    ]
+
+    @pytest.mark.parametrize("word", REMOVED)
+    def test_key_absent_from_dictionary(self, word):
+        mappings = load_spelling_mappings()
+        assert word not in mappings, f"'{word}' was deliberately removed; do not reintroduce"
+
+    @pytest.mark.parametrize("word", REMOVED)
+    def test_word_passes_through_unchanged(self, corrector, word):
+        result, changes = corrector.correct_text(f"the {word} here")
+        assert result == f"the {word} here"
+        assert len(changes) == 0
+
+    def test_kept_neighbours_still_convert(self, corrector):
+        # The removals must not take out the genuine dialect pairs nearby.
+        assert corrector.correct_text("aerogram")[0] == "aerogramme"
+        assert corrector.correct_text("The program is great.")[0] == "The programme is great."
+        assert corrector.correct_text("a license")[0] == "a licence"
+
+
 class TestCodeStrategy:
     """CodeStrategy should only convert in comments/docstrings, not string literals."""
     
