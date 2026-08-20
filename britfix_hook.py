@@ -27,6 +27,34 @@ def log(message: str):
         except:
             pass
 
+def validate_exclude_paths(raw) -> list:
+    """Validate the `exclude_paths` config value: must be a list of non-empty strings.
+    Invalid config is fatal (like a missing 'strategies' object): silently dropping
+    entries would process files the user asked to protect, and an empty-string
+    entry matches every path, silently disabling britfix everywhere."""
+    if not isinstance(raw, list):
+        log(f"[Britfix Error] 'exclude_paths' must be a list (got {type(raw).__name__})")
+        sys.exit(1)
+    for entry in raw:
+        if not isinstance(entry, str) or not entry:
+            log(f"[Britfix Error] 'exclude_paths' entries must be non-empty strings (got {entry!r})")
+            sys.exit(1)
+    return raw
+
+
+def path_is_excluded(file_path: str, exclude_paths: list) -> bool:
+    """True if file_path's resolved path contains any configured substring.
+    Compared in forward-slash (posix) form so substrings match cross-platform.
+    Matching is naive substring — see the config comment's footgun note."""
+    if not exclude_paths:
+        return False
+    try:
+        resolved = Path(file_path).resolve().as_posix()
+    except OSError:
+        resolved = Path(file_path).as_posix()
+    return any(excl in resolved for excl in exclude_paths)
+
+
 # Load and validate config
 def load_config():
     """Load and validate config.json. Exits if invalid."""
@@ -47,6 +75,8 @@ def load_config():
         log("[Britfix Error] Config missing 'strategies' object")
         sys.exit(1)
 
+    config['exclude_paths'] = validate_exclude_paths(config.get('exclude_paths', []))
+
     return config
 
 
@@ -61,6 +91,7 @@ def load_supported_extensions(config: dict) -> set:
 
 _CONFIG = load_config()
 SUPPORTED_EXTENSIONS = load_supported_extensions(_CONFIG)
+EXCLUDE_PATHS = _CONFIG.get('exclude_paths', [])
 
 
 def read_hook_input(stream=sys.stdin) -> dict:
@@ -154,7 +185,11 @@ def process_posttooluse(hook_input: dict) -> dict:
     file_path = tool_input.get('file_path', '')
     if not file_path or not os.path.exists(file_path):
         return hook_input
-    
+
+    # Skip excluded paths entirely (verbatim-content protection — see path_is_excluded)
+    if path_is_excluded(file_path, EXCLUDE_PATHS):
+        return hook_input
+
     # Check file extension
     ext = Path(file_path).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
