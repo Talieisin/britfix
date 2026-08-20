@@ -124,6 +124,22 @@ def test_merge_local_invalid_json_is_fatal(tmp_path):
         h.merge_local_config(_base_config(), _local(tmp_path, "{not json"))
 
 
+def test_merge_local_unreadable_file_is_fatal(tmp_path):
+    # An existing-but-unreadable local file (here: a directory) must fail
+    # closed with a clear error, not crash with an uncaught OSError.
+    p = tmp_path / "config.local.json"
+    p.mkdir()
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), p)
+
+
+def test_merge_local_comment_substring_key_is_fatal(tmp_path):
+    # Only 'comment' and '*_comment' are comment keys; a key merely containing
+    # the substring must still be rejected.
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), _local(tmp_path, {"uncommented": True}))
+
+
 def test_merge_local_non_object_is_fatal(tmp_path):
     with pytest.raises(SystemExit):
         h.merge_local_config(_base_config(), _local(tmp_path, ["/private/"]))

@@ -69,15 +69,16 @@ def merge_local_config(config: dict, local_path: Path) -> dict:
     try:
         with open(local_path) as f:
             local = json.load(f)
-    except json.JSONDecodeError as e:
-        log(f"[Britfix Error] Invalid JSON in {local_path.name}: {e}")
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"[Britfix Error] Cannot read {local_path.name}: {e}")
         sys.exit(1)
 
     if not isinstance(local, dict):
         log(f"[Britfix Error] {local_path.name} must be a JSON object")
         sys.exit(1)
 
-    unknown = [k for k in local if k != 'exclude_paths' and 'comment' not in k]
+    unknown = [k for k in local
+               if k != 'exclude_paths' and k != 'comment' and not k.endswith('_comment')]
     if unknown:
         log(f"[Britfix Error] {local_path.name} may only set 'exclude_paths' (got {sorted(unknown)})")
         sys.exit(1)
