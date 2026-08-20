@@ -4,23 +4,33 @@ import pytest
 import britfix_hook as h
 
 
-# --- clean_exclude_paths (config validation) -------------------------------
+# --- validate_exclude_paths (config validation) ----------------------------
 
-def test_clean_exclude_paths_valid_list():
-    assert h.clean_exclude_paths(['/Transcripts/', '/quotes/']) == ['/Transcripts/', '/quotes/']
-
-
-def test_clean_exclude_paths_empty():
-    assert h.clean_exclude_paths([]) == []
+def test_validate_exclude_paths_valid_list():
+    assert h.validate_exclude_paths(['/Transcripts/', '/quotes/']) == ['/Transcripts/', '/quotes/']
 
 
-def test_clean_exclude_paths_not_a_list():
-    # A bare string must NOT be iterated character-by-character into substrings.
-    assert h.clean_exclude_paths('/Transcripts/') == []
+def test_validate_exclude_paths_empty():
+    assert h.validate_exclude_paths([]) == []
 
 
-def test_clean_exclude_paths_drops_non_strings():
-    assert h.clean_exclude_paths(['/a/', 123, None, '/b/']) == ['/a/', '/b/']
+def test_validate_exclude_paths_not_a_list_is_fatal():
+    # A bare string must NOT be silently ignored: the user asked for protection,
+    # so a config mistake must stop the hook, not process the protected files.
+    with pytest.raises(SystemExit):
+        h.validate_exclude_paths('/Transcripts/')
+
+
+def test_validate_exclude_paths_non_string_entry_is_fatal():
+    with pytest.raises(SystemExit):
+        h.validate_exclude_paths(['/a/', 123])
+
+
+def test_validate_exclude_paths_empty_string_is_fatal():
+    # '' is a substring of every path: it would exclude everything, silently
+    # disabling britfix. Reject it outright.
+    with pytest.raises(SystemExit):
+        h.validate_exclude_paths([''])
 
 
 # --- path_is_excluded (matching) -------------------------------------------

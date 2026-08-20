@@ -34,9 +34,9 @@ install-system: build
     sudo cp dist/britfix /usr/local/bin/
     @echo "Installed to /usr/local/bin/britfix"
 
-# Run pytest test suite
+# Run pytest test suite (full discovery: core + hook tests)
 test:
-    uv run --with pytest pytest test_britfix.py -v
+    uv run --with pytest pytest -v
 
 # Quick functional test
 test-quick:

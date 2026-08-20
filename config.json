@@ -1,6 +1,6 @@
 {
   "comment": "Configuration for britfix file type handling",
-  "exclude_paths_comment": "List of substrings matched against each written file's resolved path (forward-slash/posix form, so entries work cross-platform). If any substring is found in the path, britfix skips that file entirely — use it to protect verbatim content (transcripts, quoted source text) that the word-level ignore files cannot. Matching is naive substring: 'notes' also matches 'footnotes', so prefer a distinctive fragment like '/Transcripts/'. Entries must be strings; invalid values are dropped at load.",
+  "exclude_paths_comment": "List of substrings matched against each written file's resolved path (forward-slash/posix form, so entries work cross-platform). If any substring is found in the path, britfix skips that file entirely — use it to protect verbatim content (transcripts, quoted source text) that the word-level ignore files cannot. Matching is naive substring: 'notes' also matches 'footnotes', so prefer a distinctive fragment like '/Transcripts/'. Entries must be non-empty strings; an invalid value is a fatal config error (the hook refuses to run rather than silently processing files you asked it to protect).",
   "exclude_paths": [],
   "strategies": {
     "text": {

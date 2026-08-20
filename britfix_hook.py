@@ -27,16 +27,19 @@ def log(message: str):
         except:
             pass
 
-def clean_exclude_paths(raw) -> list:
-    """Validate the `exclude_paths` config value: must be a list of strings.
-    Drop invalid entries loudly rather than failing open or crashing later."""
+def validate_exclude_paths(raw) -> list:
+    """Validate the `exclude_paths` config value: must be a list of non-empty strings.
+    Invalid config is fatal (like a missing 'strategies' object): silently dropping
+    entries would process files the user asked to protect, and an empty-string
+    entry matches every path, silently disabling britfix everywhere."""
     if not isinstance(raw, list):
-        log(f"[Britfix] 'exclude_paths' must be a list; ignoring (got {type(raw).__name__})")
-        return []
-    clean = [p for p in raw if isinstance(p, str)]
-    if len(clean) != len(raw):
-        log("[Britfix] 'exclude_paths' entries must be strings; dropped non-string entries")
-    return clean
+        log(f"[Britfix Error] 'exclude_paths' must be a list (got {type(raw).__name__})")
+        sys.exit(1)
+    for entry in raw:
+        if not isinstance(entry, str) or not entry:
+            log(f"[Britfix Error] 'exclude_paths' entries must be non-empty strings (got {entry!r})")
+            sys.exit(1)
+    return raw
 
 
 def path_is_excluded(file_path: str, exclude_paths: list) -> bool:
@@ -72,7 +75,7 @@ def load_config():
         log("[Britfix Error] Config missing 'strategies' object")
         sys.exit(1)
 
-    config['exclude_paths'] = clean_exclude_paths(config.get('exclude_paths', []))
+    config['exclude_paths'] = validate_exclude_paths(config.get('exclude_paths', []))
 
     return config
 

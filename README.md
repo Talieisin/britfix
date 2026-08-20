@@ -89,7 +89,7 @@ payload = {'colorScheme': x}    # Dict key - unchanged
 
 ## Ignoring Words (`.britfixignore`)
 
-Create a `.britfixignore` file to prevent specific words from being converted. This is useful for words like "dialog", "color", or "center" that are conventional American spellings in technical contexts.
+Create a `.britfixignore` file to prevent specific words from being converted. This is useful for words like "dialogue", "colour", or "centre" that are conventional American spellings in technical contexts.
 
 ### Format
 
@@ -184,6 +184,31 @@ Edit `config.json` to customise file type handling:
 }
 ```
 
+### Excluding paths (hook only)
+
+`exclude_paths` is a list of substrings matched against each written file's
+resolved absolute path (in forward-slash form, so entries work on any
+platform). If any substring is found in the path, the hook skips the file
+entirely. Use it to protect content that must stay verbatim (transcripts,
+quoted source text) which the word-level ignore files cannot cover:
+
+```json
+{
+  "exclude_paths": ["/Transcripts/", "/quoted-sources/"]
+}
+```
+
+Notes:
+
+- Matching is naive, case-sensitive substring: `notes` also matches
+  `footnotes`, so prefer a distinctive fragment like `/Transcripts/`.
+- Entries must be non-empty strings. An invalid value (wrong type, or an
+  empty string, which would match every path) is a fatal config error: the
+  hook refuses to run rather than silently processing files you asked it to
+  protect.
+- This only affects the hook; the `britfix` CLI processes whatever it is
+  given.
+
 ## Hook Integration
 
 The `britfix_hook.py` script integrates with tools that support hooks to automatically fix spellings when files are written.
@@ -231,6 +256,6 @@ just build         # Build standalone binary
 just clean         # Remove build artefacts
 ```
 
-## License
+## Licence
 
 MIT
