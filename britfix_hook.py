@@ -55,9 +55,41 @@ def path_is_excluded(file_path: str, exclude_paths: list) -> bool:
     return any(excl in resolved for excl in exclude_paths)
 
 
+def merge_local_config(config: dict, local_path: Path) -> dict:
+    """Merge an optional, gitignored config.local.json into the loaded config.
+
+    The local file may ONLY extend `exclude_paths` (plus comment keys) — its
+    entries are appended to the base list. Other keys are a fatal error rather
+    than being silently ignored: in particular `strategies` must stay in the
+    shared config, because the CLI loads config.json independently and a
+    hook-only override would desync the two."""
+    if not local_path.exists():
+        return config
+
+    try:
+        with open(local_path) as f:
+            local = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"[Britfix Error] Cannot read {local_path.name}: {e}")
+        sys.exit(1)
+
+    if not isinstance(local, dict):
+        log(f"[Britfix Error] {local_path.name} must be a JSON object")
+        sys.exit(1)
+
+    unknown = [k for k in local
+               if k != 'exclude_paths' and k != 'comment' and not k.endswith('_comment')]
+    if unknown:
+        log(f"[Britfix Error] {local_path.name} may only set 'exclude_paths' (got {sorted(unknown)})")
+        sys.exit(1)
+
+    config['exclude_paths'] = config['exclude_paths'] + validate_exclude_paths(local.get('exclude_paths', []))
+    return config
+
+
 # Load and validate config
 def load_config():
-    """Load and validate config.json. Exits if invalid."""
+    """Load and validate config.json (plus optional config.local.json). Exits if invalid."""
     config_path = HOOK_DIR / 'config.json'
 
     if not config_path.exists():
@@ -76,6 +108,7 @@ def load_config():
         sys.exit(1)
 
     config['exclude_paths'] = validate_exclude_paths(config.get('exclude_paths', []))
+    config = merge_local_config(config, HOOK_DIR / 'config.local.json')
 
     return config
 

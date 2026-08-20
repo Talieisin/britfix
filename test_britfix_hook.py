@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tests for britfix_hook — exclude_paths validation and path-based skipping."""
+import json
 import pytest
 import britfix_hook as h
 
@@ -89,3 +90,68 @@ def test_process_runs_when_not_excluded(monkeypatch, md_file):
     monkeypatch.setattr(h, "SUPPORTED_EXTENSIONS", {".md"})
     h.process_posttooluse(_payload(md_file))
     assert calls == [md_file]  # not excluded -> britfix invoked
+
+
+# --- merge_local_config (config.local.json) --------------------------------
+
+def _base_config():
+    return {"strategies": {}, "exclude_paths": ["/shared/"]}
+
+
+def _local(tmp_path, content):
+    p = tmp_path / "config.local.json"
+    p.write_text(content if isinstance(content, str) else json.dumps(content))
+    return p
+
+
+def test_merge_local_missing_file_is_noop(tmp_path):
+    cfg = _base_config()
+    assert h.merge_local_config(cfg, tmp_path / "config.local.json") == _base_config()
+
+
+def test_merge_local_extends_exclude_paths(tmp_path):
+    cfg = h.merge_local_config(_base_config(), _local(tmp_path, {"exclude_paths": ["/private/"]}))
+    assert cfg["exclude_paths"] == ["/shared/", "/private/"]
+
+
+def test_merge_local_comment_keys_allowed(tmp_path):
+    cfg = h.merge_local_config(_base_config(), _local(tmp_path, {"comment": "mine", "exclude_paths": []}))
+    assert cfg["exclude_paths"] == ["/shared/"]
+
+
+def test_merge_local_invalid_json_is_fatal(tmp_path):
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), _local(tmp_path, "{not json"))
+
+
+def test_merge_local_unreadable_file_is_fatal(tmp_path):
+    # An existing-but-unreadable local file (here: a directory) must fail
+    # closed with a clear error, not crash with an uncaught OSError.
+    p = tmp_path / "config.local.json"
+    p.mkdir()
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), p)
+
+
+def test_merge_local_comment_substring_key_is_fatal(tmp_path):
+    # Only 'comment' and '*_comment' are comment keys; a key merely containing
+    # the substring must still be rejected.
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), _local(tmp_path, {"uncommented": True}))
+
+
+def test_merge_local_non_object_is_fatal(tmp_path):
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), _local(tmp_path, ["/private/"]))
+
+
+def test_merge_local_strategies_override_is_fatal(tmp_path):
+    # strategies must stay in the shared config: the CLI loads config.json
+    # independently, so a hook-only override would desync the two.
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), _local(tmp_path, {"strategies": {}}))
+
+
+def test_merge_local_entries_are_validated(tmp_path):
+    with pytest.raises(SystemExit):
+        h.merge_local_config(_base_config(), _local(tmp_path, {"exclude_paths": [""]}))

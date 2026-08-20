@@ -1,3 +1,6 @@
+# Local, per-machine config (never committed, never bundled)
+/config.local.json
+
 # Build artifacts
 build/
 dist/

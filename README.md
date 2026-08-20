@@ -209,6 +209,24 @@ Notes:
 - This only affects the hook; the `britfix` CLI processes whatever it is
   given.
 
+### Local overrides (`config.local.json`)
+
+To keep private paths out of the repo, create a gitignored `config.local.json`
+next to `config.json`. Its `exclude_paths` entries are appended to the shared
+list:
+
+```json
+{
+  "exclude_paths": ["/Users/me/Private/Transcripts/"]
+}
+```
+
+The local file may only set `exclude_paths` (and comment keys). Anything
+else, in particular `strategies`, is a fatal config error: strategies must stay
+in the shared `config.json`, which the CLI also reads, so a hook-only
+override would make the two disagree about how a file should be handled. The
+file is never bundled into the built binary.
+
 ## Hook Integration
 
 The `britfix_hook.py` script integrates with tools that support hooks to automatically fix spellings when files are written.
