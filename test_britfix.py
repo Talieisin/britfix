@@ -135,9 +135,8 @@ class TestRemovedMappings:
     ]
 
     @pytest.mark.parametrize("word", REMOVED)
-    def test_key_absent_from_dictionary(self, word):
-        mappings = load_spelling_mappings()
-        assert word not in mappings, f"'{word}' was deliberately removed; do not reintroduce"
+    def test_key_absent_from_dictionary(self, corrector, word):
+        assert word not in corrector.dictionary, f"'{word}' was deliberately removed; do not reintroduce"
 
     @pytest.mark.parametrize("word", REMOVED)
     def test_word_passes_through_unchanged(self, corrector, word):
