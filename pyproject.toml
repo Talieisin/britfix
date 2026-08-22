@@ -2,7 +2,7 @@
 name = "britfix"
 version = "1.0.0"
 description = "Convert American spellings to British English"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "colorama>=0.4.6",
 ]
