@@ -1,4 +1,4 @@
-# managed-by: talieisin-org-bootstrap v4
+# managed-by: talieisin-org-bootstrap v5
 # Fires when the org dispatcher labels a major Dependabot PR `ai-upgrade`.
 # All logic lives in the org's shared reusable workflows; operational
 # documentation is internal.
@@ -15,6 +15,7 @@ permissions:
   checks: read
   issues: write
   actions: read
+  statuses: read # rescue mode: legacy commit-status comparison
 
 jobs:
   upgrade:
