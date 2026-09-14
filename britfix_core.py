@@ -52,6 +52,10 @@ def _load_config() -> Dict:
         if not strategy['extensions']:
             raise ConfigError(f"Strategy '{name}' has no extensions defined")
 
+    quote_policy = strategies.get('markdown', {}).get('preserve_quoted_prose', False)
+    if not isinstance(quote_policy, bool):
+        raise ConfigError("markdown.preserve_quoted_prose must be a boolean")
+
     return config
 
 
@@ -379,9 +383,11 @@ class MarkdownStrategy(FileProcessingStrategy):
         return len(content)
 
     def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
-        from britfix_spans import markdown_spans, mask_spans
+        from britfix_spans import markdown_spans, mask_spans, quotation_spans
 
-        masked, restore = mask_spans(content, markdown_spans(content))
+        preserve_quotes = _CONFIG['strategies'].get('markdown', {}).get('preserve_quoted_prose', False)
+        spans = markdown_spans(content) + quotation_spans(content, preserve_quotes)
+        masked, restore = mask_spans(content, spans)
         result, changes = self._process_preserved(masked, corrector)
         return restore(result), changes
 

@@ -157,3 +157,52 @@ def markdown_spans(text):
 
 def normalise_label(label):
     return ' '.join(re.sub(r'\\([!"#$%&\'()*+,\-./:;<=>?@\[\]\\^_`{|}~])', r'\1', label).split()).casefold()
+
+
+def quotation_spans(text, all_quotes=False):
+    """Explicit italic quotations are verbatim; broader prose quoting is opt-in."""
+    spans = []
+    pairs = {'"': '"', "'": "'", '\u201c': '\u201d', '\u2018': '\u2019'}
+    i = 0
+    while i < len(text):
+        opening = text[i]
+        if opening == '\\':
+            i += 2
+            continue
+        if opening not in pairs:
+            i += 1
+            continue
+        # Apostrophes inside words or immediately after a word are not openers.
+        if opening in ("'", '\u2018') and i and text[i - 1].isalnum():
+            i += 1
+            continue
+        if opening == "'" and re.match(r"(?:\d{2}s|cause|em|tis|twas|til)\b", text[i + 1:], re.I):
+            i += 1
+            continue
+        italic = i > 0 and text[i - 1] in '*_'
+        paragraph = re.search(r'\r?\n[ \t]*\r?\n', text[i:])
+        limit = i + paragraph.start() if paragraph else len(text)
+        closing = pairs[opening]
+        j = i + 1
+        while j < limit:
+            if text[j] == '\\':
+                j += 2
+                continue
+            if text[j] == closing:
+                # An apostrophe within a word cannot close a quoted phrase.
+                if closing in ("'", '\u2019') and j + 1 < len(text) and text[j + 1].isalnum():
+                    j += 1
+                    continue
+                break
+            j += 1
+        matched = j < limit
+        italic = italic and matched and text[j + 1:j + 2] == text[i - 1]
+        if matched and (all_quotes or italic):
+            spans.append((i - 1 if italic else i, j + 2 if italic else j + 1))
+            i = j + 1
+        elif all_quotes and opening in ('"', '\u201c', '\u2018'):
+            spans.append((i, limit))
+            i = limit
+        else:
+            i += 1
+    return spans

@@ -281,3 +281,9 @@ MIT
 ### Markdown references and URLs
 
 Bare HTTP(S) URLs, including query strings, fragments and balanced parentheses, are preserved. Apostrophes inside a URL remain URI data. Inline and image destinations and reference identifiers are preserved; collapsed and shortcut labels remain unchanged where visible text also identifies the reference. Ordinary link text and surrounding prose still convert. HTML comments and script/style bodies are preserved.
+
+### Markdown quotations
+
+**New default:** explicit italicised quotations (`*"color"*` or `_“color”_`) are now preserved verbatim. This extends the existing blockquote protection; ordinary italic emphasis still converts.
+
+Ordinary unformatted quotations retain their previous conversion behaviour. To preserve them too, set `strategies.markdown.preserve_quoted_prose` to `true` in `config.json` (boolean, default `false`). This intentionally misses spelling corrections within quoted prose. Unclosed double/curly quotations preserve the remainder of their paragraph; straight single quotes require a pair, so leading elisions and decades do not hide the remainder of a paragraph.

@@ -8,6 +8,7 @@
       "extensions": [".txt"]
     },
     "markdown": {
+      "preserve_quoted_prose": false,
       "description": "Markdown - preserve code, blockquotes, HTML markup, URLs and link/reference targets",
       "extensions": [".md", ".markdown", ".mdown", ".mkd", ".mdx"]
     },
