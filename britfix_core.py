@@ -561,35 +561,23 @@ class MarkdownStrategy(FileProcessingStrategy):
 
 
 class LaTeXStrategy(FileProcessingStrategy):
-    """Process LaTeX files, preserving commands."""
-    
-    def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
-        # Patterns to preserve
-        preserve_patterns = [
-            r'\\[a-zA-Z]+\{[^}]*\}',  # LaTeX commands with arguments
-            r'\\[a-zA-Z]+',            # LaTeX commands without arguments
-            r'\$[^$]+\$',              # Inline math
-            r'\$\$[^$]+\$\$',          # Display math
-        ]
-        
-        # Split content into segments
-        combined_pattern = '(' + '|'.join(preserve_patterns) + ')'
-        segments = re.split(combined_pattern, content)
-        
-        # Process only non-LaTeX segments
-        corrected_segments = []
-        total_changes = defaultdict(int)
-        
-        for i, segment in enumerate(segments):
-            if segment and i % 2 == 0:  # Even indices are non-LaTeX text
-                corrected, changes = corrector.correct_text(segment)
-                corrected_segments.append(corrected)
-                for word, count in changes.items():
-                    total_changes[word] += count
-            else:
-                corrected_segments.append(segment or '')
-                
-        return ''.join(corrected_segments), dict(total_changes)
+    """Correct bounded prose regions while preserving LaTeX syntax."""
+
+    partial_skips = ()
+
+    def find_safe_replacements(self, content, corrector):
+        from britfix_latex import latex_replacements
+        replacements, self.partial_skips = latex_replacements(content, corrector)
+        return replacements
+
+    def process(self, content, corrector):
+        replacements = self.find_safe_replacements(content, corrector)
+        result = content
+        counts = defaultdict(int)
+        for start, end, old, new in reversed(replacements):
+            result = result[:start] + new + result[end:]
+            counts[old.lower()] += 1
+        return result, dict(counts)
 
 
 class HTMLStrategy(FileProcessingStrategy):

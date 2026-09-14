@@ -1,0 +1,68 @@
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+import britfix
+from britfix_core import LaTeXStrategy, SpellingCorrector
+
+
+@pytest.fixture
+def corrector():
+    return SpellingCorrector({'color': 'colour', 'behavior': 'behaviour'})
+
+
+@pytest.mark.parametrize('protected', [
+    r'\color{color}', r'\label{behavior}', r'\cite[color]{behavior}',
+    r'\input{color}', r'\unknown{color {behavior}}', r'\url{https://example.org/color}',
+    r'$color$', r'$$color$$', r'\(color\)', r'\[behavior\]',
+    r'\begin{equation}color\end{equation}',
+    r'\begin{align*}color\end{align*}',
+    r'\begin{verbatim}color\end{verbatim}',
+    r'\begin{lstlisting}color\end{lstlisting}',
+    r'\begin{minted}{python}color\end{minted}',
+    r'\verb|color|', r'\verb*|color|', r'\lstinline[language=C]|color|',
+    r'\mintinline{python}|color|', r'\mintinline{python}{color}',
+])
+def test_syntax_protected_with_prose_control(corrector, protected):
+    source = f'color {protected} behavior'
+    strategy = LaTeXStrategy()
+    result, counts = strategy.process(source, corrector)
+    assert result == f'colour {protected} behaviour'
+    assert counts == {'color': 1, 'behavior': 1}
+    assert len(strategy.find_safe_replacements(source, corrector)) == 2
+
+
+@pytest.mark.parametrize('macro', ['textbf', 'textit', 'emph', 'section', 'section*', 'caption', 'footnote'])
+def test_known_prose_arguments_convert(corrector, macro):
+    source = '\\' + macro + '[color]{color \\emph{behavior}}'
+    expected = '\\' + macro + '[color]{colour \\emph{behaviour}}'
+    assert LaTeXStrategy().process(source, corrector)[0] == expected
+
+
+def test_href_argument_roles(corrector):
+    source = r'\href{https://example.org/color}{color \emph{behavior}}'
+    assert LaTeXStrategy().process(source, corrector)[0] == r'\href{https://example.org/color}{colour \emph{behaviour}}'
+
+
+def test_comments_and_escaped_braces(corrector):
+    source = 'color % behavior { $ not structural\n' + r'\textbf{color \{ behavior \}}'
+    assert LaTeXStrategy().process(source, corrector)[0] == source.replace('color', 'colour').replace('behavior', 'behaviour')
+
+
+@pytest.mark.parametrize('tail', [r'\unknown{color', '$color', r'\begin{minted}{python}color', r'\verb|color'])
+def test_unterminated_region_preserves_remainder(corrector, tail):
+    strategy = LaTeXStrategy()
+    assert strategy.process('color ' + tail, corrector)[0] == 'colour ' + tail
+    assert strategy.partial_skips
+
+
+def test_partial_diagnostic_reaches_cli(tmp_path):
+    path = tmp_path / 'input.tex'
+    path.write_text('color $behavior')
+    result = subprocess.run([sys.executable, str(Path(britfix.__file__)), '--input', str(path), '--no-backup'], capture_output=True, text=True)
+    assert result.returncode == 0
+    assert 'britfix: skipped ' in result.stderr
+    assert 'partial: 1' in result.stdout
+    assert path.read_text() == 'colour $behavior'

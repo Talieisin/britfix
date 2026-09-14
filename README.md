@@ -295,3 +295,9 @@ Python files use tokenisation and AST docstring identification while retaining t
 Either Python parsing or tokenisation failure skips the whole file; newer syntax unsupported by the running Python version is also skipped. Unsupported encodings are skipped rather than transcoded. The CLI emits `britfix: skipped` diagnostics and separate skipped counts; the hook relays those diagnostics to stderr. These are diagnostic records, not a model-interrupting hook response.
 
 UTF-8 BOMs and line endings survive automatic and interactive file I/O. Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.
+
+### Bounded LaTeX prose handling
+
+LaTeX uses a balanced lexical scanner, not macro expansion. Command names, optional arguments, unknown macro arguments, mathematics, and verbatim/listings/minted regions are preserved. Mandatory arguments of standard text, heading, caption and footnote commands remain prose; `href` preserves its target but processes its visible text. Unterminated recognised structures preserve the affected remainder and produce `britfix: skipped` diagnostics with a partial-file count.
+
+Custom catcode changes and arbitrary macro expansion are not supported. Unknown macros intentionally sacrifice corrections to preserve their arguments. Escaped braces and comment delimiters are handled before balancing. The tests document the supported command/environment set.

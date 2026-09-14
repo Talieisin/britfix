@@ -397,6 +397,7 @@ Examples:
     processed_files = []
     scanned_files = 0
     skipped_files = 0
+    partial_files = 0
     
     for filepath in files:
         if not os.path.exists(filepath):
@@ -434,6 +435,12 @@ Examples:
             else:
                 corrected_content, file_changes = strategy.process(content, file_corrector)
             
+            notes = getattr(strategy, 'partial_skips', ())
+            if notes:
+                partial_files += 1
+                for note in notes:
+                    detail = json.dumps({'path': filepath, 'region': 'remainder', 'reason': note}, ensure_ascii=True)
+                    print(f'britfix: skipped {detail}', file=sys.stderr)
             scanned_files += 1
             if file_changes:
                 processed_files.append((filepath, file_changes))
@@ -464,7 +471,7 @@ Examples:
         except ProcessingSkipped as exc:
             skipped_files += 1
             detail = json.dumps({'path': filepath, 'reason': str(exc)}, ensure_ascii=True)
-            print(f' britfix: skipped {detail}'.lstrip(), file=sys.stderr)
+            print(f'britfix: skipped {detail}', file=sys.stderr)
             continue
         except Exception as e:
             logging.error(f"Error processing {filepath}: {e}")
@@ -486,10 +493,10 @@ Examples:
         print(f"\nTotal changes across all files:")
         for word, count in sorted(total_changes.items(), key=lambda x: (-x[1], x[0])):
             print(f"  {word} -> {american_to_british[word]}: {count} occurrence(s)")
-    elif not skipped_files:
+    elif not skipped_files and not partial_files:
         print("\nNo changes were needed in any files.")
-    if skipped_files:
-        print(f"Processed: {scanned_files}; changed: {len(processed_files)}; skipped: {skipped_files}")
+    if skipped_files or partial_files:
+        print(f"Processed: {scanned_files}; changed: {len(processed_files)}; skipped: {skipped_files}; partial: {partial_files}")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@
       "extensions": [".md", ".markdown", ".mdown", ".mkd", ".mdx"]
     },
     "latex": {
-      "description": "LaTeX - skip commands and math",
+      "description": "LaTeX - preserve syntax, math and verbatim; correct known prose arguments",
       "extensions": [".tex"]
     },
     "html": {
