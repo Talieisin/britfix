@@ -57,7 +57,7 @@ Different file types are handled by different strategies, configured in `config.
 | Strategy | Extensions | Behaviour |
 |----------|------------|-----------|
 | **text** | `.txt` | Convert everything |
-| **markdown** | `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx` | Preserve code spans and code blocks |
+| **markdown** | `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx` | Preserve code, blockquotes, HTML markup, URLs, and Markdown link/reference targets |
 | **latex** | `.tex` | Skip LaTeX commands and math |
 | **html** | `.html`, `.htm`, `.xml` | Skip HTML tags and `<style>`/`<script>` content |
 | **css** | `.css`, `.scss`, `.sass`, `.less` | Only convert comments |
@@ -277,3 +277,7 @@ just clean         # Remove build artefacts
 ## Licence
 
 MIT
+
+### Markdown references and URLs
+
+Bare HTTP(S) URLs, including query strings, fragments and balanced parentheses, are preserved. Apostrophes inside a URL remain URI data. Inline and image destinations and reference identifiers are preserved; collapsed and shortcut labels remain unchanged where visible text also identifies the reference. Ordinary link text and surrounding prose still convert. HTML comments and script/style bodies are preserved.

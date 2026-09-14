@@ -379,6 +379,13 @@ class MarkdownStrategy(FileProcessingStrategy):
         return len(content)
 
     def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+        from britfix_spans import markdown_spans, mask_spans
+
+        masked, restore = mask_spans(content, markdown_spans(content))
+        result, changes = self._process_preserved(masked, corrector)
+        return restore(result), changes
+
+    def _process_preserved(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
         total_changes = defaultdict(int)
         result = []
         i = 0

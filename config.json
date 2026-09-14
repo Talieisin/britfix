@@ -8,7 +8,7 @@
       "extensions": [".txt"]
     },
     "markdown": {
-      "description": "Markdown - preserve code spans and code blocks",
+      "description": "Markdown - preserve code, blockquotes, HTML markup, URLs and link/reference targets",
       "extensions": [".md", ".markdown", ".mdown", ".mkd", ".mdx"]
     },
     "latex": {
