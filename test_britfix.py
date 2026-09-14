@@ -1257,7 +1257,8 @@ class TestCssStrategyMapping:
         from britfix_core import get_file_strategy, CssStrategy, CodeStrategy
         strategy = get_file_strategy('.py')
         assert not isinstance(strategy, CssStrategy)
-        assert isinstance(strategy, CodeStrategy)
+        from britfix_python import PythonStrategy
+        assert isinstance(strategy, PythonStrategy)
 
 
 class TestGetFileStrategyName:

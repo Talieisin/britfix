@@ -287,3 +287,11 @@ Bare HTTP(S) URLs, including query strings, fragments and balanced parentheses, 
 **New default:** explicit italicised quotations (`*"color"*` or `_“color”_`) are now preserved verbatim. This extends the existing blockquote protection; ordinary italic emphasis still converts.
 
 Ordinary unformatted quotations retain their previous conversion behaviour. To preserve them too, set `strategies.markdown.preserve_quoted_prose` to `true` in `config.json` (boolean, default `false`). This intentionally misses spelling corrections within quoted prose. Unclosed double/curly quotations preserve the remainder of their paragraph; straight single quotes require a pair, so leading elisions and decades do not hide the remainder of a paragraph.
+
+### Python and file preservation
+
+Python files use tokenisation and AST docstring identification while retaining the `code:` ignore namespace. Non-docstring string literals, executable tokens, shebangs and technical references remain unchanged. The protected-name set is file-local and case-sensitive: declared/referenced names and standalone identifier string values also protect their prose mentions. This deliberately misses some ordinary prose corrections. Other source languages retain their existing strategy.
+
+Either Python parsing or tokenisation failure skips the whole file; newer syntax unsupported by the running Python version is also skipped. Unsupported encodings are skipped rather than transcoded. The CLI emits `britfix: skipped` diagnostics and separate skipped counts; the hook relays those diagnostics to stderr. These are diagnostic records, not a model-interrupting hook response.
+
+UTF-8 BOMs and line endings survive automatic and interactive file I/O. Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.

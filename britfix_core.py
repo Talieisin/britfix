@@ -1131,7 +1131,11 @@ def _build_file_strategies() -> Dict[str, Tuple[str, FileProcessingStrategy]]:
         strategy_instance = _STRATEGY_INSTANCES.get(strategy_name)
         if strategy_instance:
             for ext in strategy_config['extensions']:
-                strategies[ext.lower()] = (strategy_name, strategy_instance)
+                if strategy_name == 'code' and ext.lower() == '.py':
+                    from britfix_python import PythonStrategy
+                    strategies[ext.lower()] = ('code', PythonStrategy())
+                else:
+                    strategies[ext.lower()] = (strategy_name, strategy_instance)
 
     return strategies
 
