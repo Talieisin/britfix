@@ -560,7 +560,7 @@ class LaTeXStrategy(FileProcessingStrategy):
         ]
         
         # Split content into segments
-        combined_pattern = '|'.join(f'({p})' for p in preserve_patterns)
+        combined_pattern = '(' + '|'.join(preserve_patterns) + ')'
         segments = re.split(combined_pattern, content)
         
         # Process only non-LaTeX segments
