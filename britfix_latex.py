@@ -14,6 +14,7 @@ PROTECTED_ENVIRONMENTS = {
     'math', 'displaymath', 'equation', 'align', 'alignat', 'gather',
     'multline', 'eqnarray', 'verbatim', 'Verbatim', 'lstlisting', 'minted',
 }
+VERBATIM_ENVIRONMENTS = {'verbatim', 'Verbatim', 'lstlisting', 'minted'}
 
 
 def group_end(text, start, limit):
@@ -163,8 +164,11 @@ def latex_spans(text):
                         env = text[gap + 1:end - 1]
                         if env.rstrip('*') in PROTECTED_ENVIRONMENTS:
                             terminator = '\\end{' + env + '}'
-                            close = text.find(terminator, end, limit)
-                            if close == -1:
+                            if env.rstrip('*') in VERBATIM_ENVIRONMENTS:
+                                close = text.find(terminator, end, limit)
+                            else:
+                                close = find_delimiter(text, terminator, end, limit)
+                            if close is None or close == -1:
                                 unfinished(i, f'unterminated LaTeX environment {env}')
                                 return
                             close += len(terminator)

@@ -66,3 +66,12 @@ def test_partial_diagnostic_reaches_cli(tmp_path):
     assert 'britfix: skipped ' in result.stderr
     assert 'partial: 1' in result.stdout
     assert path.read_text() == 'colour $behavior'
+
+
+@pytest.mark.parametrize('inert_end', [r'% \end{equation}', r'\\end{equation}'])
+def test_math_terminator_respects_comments_and_escapes(corrector, inert_end):
+    equation = '\\begin{equation}\n' + inert_end + '\ncolor\n\\end{equation}'
+    source = 'color ' + equation + ' behavior'
+    strategy = LaTeXStrategy()
+    assert strategy.process(source, corrector)[0] == 'colour ' + equation + ' behaviour'
+    assert not strategy.partial_skips
