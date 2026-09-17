@@ -56,6 +56,10 @@ def _load_config() -> Dict:
     if not isinstance(quote_policy, bool):
         raise ConfigError("markdown.preserve_quoted_prose must be a boolean")
 
+    identifier_policy = strategies.get('code', {}).get('python_identifier_protection', 'defined')
+    if not isinstance(identifier_policy, str) or identifier_policy not in ('defined', 'all'):
+        raise ConfigError('code.python_identifier_protection must be "defined" or "all"')
+
     return config
 
 
