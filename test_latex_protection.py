@@ -124,3 +124,30 @@ def test_non_boolean_latex_quote_policy_rejected(monkeypatch, value):
     monkeypatch.setattr('builtins.open', lambda *a, **k: io.StringIO(json_module.dumps(config)))
     with pytest.raises(core.ConfigError, match='latex.preserve_quoted_prose must be a boolean'):
         core._load_config()
+
+
+@pytest.mark.parametrize('verbatim', [
+    r'\url{https://example.org/a%20b}',
+    r'\url{C:\temp\color}',
+    r'\path{a%b\color}',
+    r'\nolinkurl{a%b}',
+    r'\href{https://example.org/?q=100%25}{color}',
+    r'\href[pdfnewwindow]{https://example.org/%7Ecolor}{color}',
+    r'\lstinline{printf("%d\n")}',
+    r'\mintinline{c}{printf("%d\n")}',
+])
+def test_verbatim_arguments_keep_percent_and_backslash_literal(corrector, verbatim):
+    source = verbatim + ' behavior\ncolor'
+    expected = verbatim.replace('}{color}', '}{colour}') + ' behaviour\ncolour'
+    strategy = LaTeXStrategy()
+    assert strategy.process(source, corrector)[0] == expected
+    assert not strategy.partial_skips
+
+
+def test_percent_in_url_nested_in_argument_is_a_comment(corrector):
+    # TeX has already tokenised the outer argument, so % starts a comment there
+    # and the url package requires \%; the remainder stays preserved.
+    source = 'color \\footnote{\\url{a%b}}\nbehavior'
+    strategy = LaTeXStrategy()
+    assert strategy.process(source, corrector)[0] == 'colour \\footnote{\\url{a%b}}\nbehavior'
+    assert strategy.partial_skips

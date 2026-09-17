@@ -16,19 +16,21 @@ PROTECTED_ENVIRONMENTS = {
     'multline', 'eqnarray', 'verbatim', 'Verbatim', 'lstlisting', 'minted',
 }
 VERBATIM_ENVIRONMENTS = {'verbatim', 'Verbatim', 'lstlisting', 'minted'}
+# First mandatory argument is read verbatim: backslash and % are literal.
+VERBATIM_ARGUMENT_COMMANDS = {'url', 'path', 'nolinkurl', 'href'}
 COMMAND = re.compile(r'\\([A-Za-z@]+\*?|.)', re.S)
 
 
-def group_end(text, start, limit):
+def group_end(text, start, limit, verbatim=False):
     opening = text[start]
     closing = {'{': '}', '[': ']'}[opening]
     depth = 1
     i = start + 1
     while i < limit:
-        if text[i] == '\\':
+        if text[i] == '\\' and not verbatim:
             i += 2
             continue
-        if text[i] == '%':
+        if text[i] == '%' and not verbatim:
             newline = text.find('\n', i, limit)
             i = limit if newline == -1 else newline + 1
             continue
@@ -137,7 +139,7 @@ def latex_spans(text, preserve_quotes=False):
                     unfinished(i, 'unterminated inline verbatim')
                     return
                 if text[pos] == '{' and name != 'verb':
-                    end = group_end(text, pos, limit)
+                    end = group_end(text, pos, limit, verbatim=True)
                 else:
                     closing = text.find(text[pos], pos + 1, limit)
                     end = None if closing == -1 else closing + 1
@@ -156,7 +158,9 @@ def latex_spans(text, preserve_quotes=False):
                     gap += 1
                 if gap >= limit or text[gap] not in '[{':
                     break
-                end = group_end(text, gap, limit)
+                verbatim = (text[gap] == '{' and mandatory == 0
+                            and name in VERBATIM_ARGUMENT_COMMANDS)
+                end = group_end(text, gap, limit, verbatim)
                 if end is None:
                     unfinished(i, 'unterminated LaTeX command argument')
                     return
