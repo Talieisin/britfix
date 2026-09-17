@@ -383,7 +383,12 @@ class MarkdownStrategy(FileProcessingStrategy):
 
         masked, restore = mask_spans(content, markdown_spans(content))
         result, changes = self._process_preserved(masked, corrector)
-        return restore(result), changes
+        restored = restore(result)
+        if restored.count('\x00') > content.count('\x00'):
+            # Fail closed: a mask token that did not come back intact must
+            # never reach a file, so leave the content alone.
+            return content, {}
+        return restored, changes
 
     def _process_preserved(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
         total_changes = defaultdict(int)

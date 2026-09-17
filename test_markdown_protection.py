@@ -262,3 +262,18 @@ def test_mask_restore_round_trips_a_source_containing_nul(corrector):
     masked, restore = mask_spans(source, markdown_spans(source))
     assert restore(masked) == source
     assert _process(corrector, source) == source.replace(' color', ' colour')
+
+
+def test_damaged_mask_returns_the_source_unchanged(corrector, monkeypatch):
+    import britfix_spans
+
+    real = britfix_spans.mask_spans
+
+    def damaged(text, spans):
+        masked, _ = real(text, spans)
+        return masked, lambda result: result
+
+    monkeypatch.setattr(britfix_spans, 'mask_spans', damaged)
+    source = 'color text <!-- keep color --> behavior\n'
+    assert MarkdownStrategy().process(source, corrector) == (source, {})
+    assert MarkdownStrategy().find_safe_replacements(source, corrector) == []
