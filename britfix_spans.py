@@ -504,11 +504,13 @@ def _emphasis_flanked(text, start, end):
     Deliberately stricter than CommonMark, which also accepts a run preceded by
     any punctuation: a run glued to a path or a glob (``src/*``) must not open a
     quotation. Missing a protection is safer here than protecting prose that
-    was never quoted.
+    was never quoted. The other emphasis delimiter is allowed, so a quotation
+    nested in emphasis (``_*"..."*_``) keeps its protection.
     """
     if start:
         before = text[start - 1]
-        if not (before.isspace() or unicodedata.category(before) in _OPENING_PUNCTUATION):
+        if not (before.isspace() or before in '*_'
+                or unicodedata.category(before) in _OPENING_PUNCTUATION):
             return False
     if end < len(text):
         after = text[end]
@@ -574,6 +576,47 @@ def quotation_spans(text, all_quotes=False):
         k = bisect.bisect_right(starts, pos) - 1
         return regions[k] if k >= 0 and pos < regions[k][1] else None
 
+    closers = {}
+
+    def next_closer(closing, pos):
+        """First usable closing mark at or after pos, or None.
+
+        Wrapped in a _Finder as the markup closers are: openers are visited in
+        order, so a scan that ran off the end of a paragraph answers every
+        later opener without rescanning. A curly or single quotation mark that
+        never closes would otherwise rescan to the paragraph end from every
+        opener.
+        """
+        if closing not in closers:
+            def search(start):
+                j = start
+                k = bisect.bisect_left(starts, start)
+                block = starts[k] if k < len(regions) else n
+                while j < n:
+                    # Step over whole code regions: a quotation mark inside
+                    # code must not close a quotation opened in prose, and a
+                    # span must never cover part of a code region.
+                    if j >= block:
+                        j = regions[k][1]
+                        k += 1
+                        block = starts[k] if k < len(regions) else n
+                        continue
+                    if text[j] == '\\':
+                        j += 2
+                        continue
+                    if text[j] == closing:
+                        # An apostrophe within a word cannot close a phrase.
+                        if closing in ("'", '\u2019') and j + 1 < n and text[j + 1].isalnum():
+                            j += 1
+                            continue
+                        return j, j + 1
+                    j += 1
+                return None
+
+            closers[closing] = _Finder(search)
+        hit = closers[closing](pos)
+        return hit[0] if hit else None
+
     # Only a quotation mark glued to an emphasis delimiter can open a protected
     # span by default, so the default scan skips every other quotation mark.
     candidate = _QUOTE if all_quotes else _EMPHASISED_QUOTE
@@ -603,32 +646,10 @@ def quotation_spans(text, all_quotes=False):
             while run_start and text[run_start - 1] == delimiter:
                 run_start -= 1
         limit = paragraph_end(i)
-        closing = _QUOTES[opening]
-        # Step over whole code regions: a quotation mark inside code must not
-        # close a quotation opened in prose, and a span must never cover part
-        # of a code region.
-        k = bisect.bisect_left(starts, i + 1)
-        block = starts[k] if k < len(regions) else n
-        j = i + 1
-        while j < limit:
-            if j >= block:
-                j = regions[k][1]
-                k += 1
-                block = starts[k] if k < len(regions) else n
-                continue
-            if text[j] == '\\':
-                j += 2
-                continue
-            if text[j] == closing:
-                # An apostrophe within a word cannot close a quoted phrase.
-                if closing in ("'", '\u2019') and j + 1 < n and text[j + 1].isalnum():
-                    j += 1
-                    continue
-                break
-            j += 1
-        matched = j < limit
+        j = next_closer(_QUOTES[opening], i + 1)
+        matched = j is not None and j < limit
         emphasised = False
-        run_end = j + 1
+        run_end = (j + 1) if matched else limit
         if matched and delimiter:
             end = j + 1
             while end < n and text[end] == delimiter:

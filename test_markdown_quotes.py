@@ -129,3 +129,23 @@ def test_dense_paragraph_scans_in_linear_time(all_quotes):
     start = time.perf_counter()
     quotation_spans(text, all_quotes)
     assert time.perf_counter() - start < 2.0
+
+
+@pytest.mark.parametrize('quote', ['_*"color"*_', '**_"color"_**', '*__"color"__*', '***"color"***'])
+def test_quotations_nested_in_emphasis_are_preserved(quote):
+    """The other emphasis delimiter may precede an opening run."""
+    assert markdown(f'{quote} and color') == f'{quote} and colour'
+
+
+@pytest.mark.parametrize('source', ['x*"color"* and color', 'x/*"color"* and color', 'a1_"color"_ and color'])
+def test_delimiter_after_a_word_or_path_still_protects_nothing(source):
+    assert markdown(source) == source.replace('color', 'colour')
+
+
+@pytest.mark.parametrize('source', ['*“color flavor ' * 2000, '_“' * 8000, '\'color ' * 8000])
+def test_openers_that_never_close_scan_once(source):
+    """An opener with no closing mark must not rescan its paragraph each time."""
+    start = time.perf_counter()
+    quotation_spans(source, False)
+    quotation_spans(source, True)
+    assert time.perf_counter() - start < 5.0
