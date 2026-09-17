@@ -8,11 +8,13 @@
       "extensions": [".txt"]
     },
     "markdown": {
-      "description": "Markdown - preserve code spans and code blocks",
+      "preserve_quoted_prose": false,
+      "description": "Markdown - preserve code, blockquotes, HTML markup, URLs and link/reference targets",
       "extensions": [".md", ".markdown", ".mdown", ".mkd", ".mdx"]
     },
     "latex": {
-      "description": "LaTeX - skip commands and math",
+      "preserve_quoted_prose": false,
+      "description": "LaTeX - preserve syntax, math and verbatim; correct known prose arguments",
       "extensions": [".tex"]
     },
     "html": {
@@ -28,6 +30,7 @@
       "extensions": [".json"]
     },
     "code": {
+      "python_identifier_protection": "defined",
       "description": "Code - only convert comments and docstrings (not string literals)",
       "extensions": [
         ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".hpp",
