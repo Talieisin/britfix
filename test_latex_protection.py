@@ -151,3 +151,16 @@ def test_percent_in_url_nested_in_argument_is_a_comment(corrector):
     strategy = LaTeXStrategy()
     assert strategy.process(source, corrector)[0] == 'colour \\footnote{\\url{a%b}}\nbehavior'
     assert strategy.partial_skips
+
+
+def test_moderate_nesting_still_converts(corrector):
+    source = r'\textbf{' * 20 + 'color' + '}' * 20 + ' behavior'
+    assert LaTeXStrategy().process(source, corrector)[0] == source.replace('color', 'colour').replace('behavior', 'behaviour')
+
+
+def test_deep_nesting_preserves_remainder_without_error(corrector):
+    source = 'color ' + r'\textbf{' * 3000 + 'color' + '}' * 3000 + ' behavior'
+    strategy = LaTeXStrategy()
+    result, _ = strategy.process(source, corrector)
+    assert result == 'colour ' + source[len('color '):]
+    assert strategy.partial_skips == ['LaTeX nesting too deep']

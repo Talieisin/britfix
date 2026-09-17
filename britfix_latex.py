@@ -19,6 +19,8 @@ VERBATIM_ENVIRONMENTS = {'verbatim', 'Verbatim', 'lstlisting', 'minted'}
 # First mandatory argument is read verbatim: backslash and % are literal.
 VERBATIM_ARGUMENT_COMMANDS = {'url', 'path', 'nolinkurl', 'href'}
 COMMAND = re.compile(r'\\([A-Za-z@]+\*?|.)', re.S)
+# Prose arguments are scanned recursively; deeper nesting preserves the remainder.
+MAX_NESTING = 100
 
 
 def group_end(text, start, limit, verbatim=False):
@@ -75,7 +77,7 @@ def latex_spans(text, preserve_quotes=False):
         spans.append((start, len(text)))
         notes.append(reason)
 
-    def scan(start, limit):
+    def scan(start, limit, depth=0):
         i = start
         while i < limit:
             if text[i] == '%':
@@ -184,8 +186,11 @@ def latex_spans(text, preserve_quotes=False):
                             pos = close
                             break
                     if name in PROSE_COMMANDS or (name == 'href' and mandatory == 2):
+                        if depth >= MAX_NESTING:
+                            unfinished(i, 'LaTeX nesting too deep')
+                            return
                         spans.extend([(gap, gap + 1), (end - 1, end)])
-                        scan(gap + 1, end - 1)
+                        scan(gap + 1, end - 1, depth + 1)
                     else:
                         spans.append((gap, end))
                 pos = end
