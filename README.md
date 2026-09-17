@@ -70,6 +70,16 @@ JSON values are corrected only when they contain whitespace. Single-token string
 
 To opt out of JSON correction entirely, add `json:*` to your `.britfixignore` (see the [strategy escape hatch](#format) below).
 
+### Markdown File Handling
+
+Markdown prose is corrected; code spans, fenced and indented code blocks, and blockquotes are left alone.
+
+- **URLs**: bare HTTP(S) URLs, including query strings, fragments and balanced parentheses, are preserved. Apostrophes inside a URL remain URI data. URLs without a scheme (`www.example.org`) are not recognised.
+- **Links and references**: inline and image destinations are preserved, as are reference identifiers at both the use site and the definition; collapsed and shortcut labels stay unchanged where the visible text also identifies the reference. Ordinary link text and surrounding prose still convert. A reference definition keeps its label, destination and title verbatim; a line that only looks like one (for example `[Note]: some sentence` with trailing words) is treated as prose.
+- **Footnotes**: the footnote label (`[^note]`) is kept at its definition and use sites, but the footnote text itself is corrected.
+- **HTML**: tags and their attributes, HTML comments, and `<script>`/`<style>` bodies are preserved. Text inside HTML comments is kept verbatim; this is a deliberate change, as earlier versions corrected comment text. Markup written inside code is not treated as markup. An HTML comment, `<script>` or `<style>` that starts at the beginning of a line runs to its closing marker, even across blank lines. One that is never closed, or that starts mid-line and is not closed within its paragraph, is protected only to the end of that paragraph (or to the next code fence or backtick), so correction resumes afterwards instead of stopping for the rest of the file.
+- **Quotations**: an emphasised quotation is preserved verbatim, so `*"color"*`, `_“color”_` and the bold forms `**"color"**` and `__"color"__` keep their spelling. The delimiters must flank the quotation the way emphasis does, so a delimiter belonging to a path or a glob (`"src/*"` next to `"**/test"`) does not open one, and a run of asterisks only pairs with a run of the same length. A quotation nested in further emphasis (`_*"color"*_`) keeps its protection. Ordinary emphasis without quotation marks still converts, and quotations inside code spans, code blocks and blockquotes are not scanned at all. Setting `strategies.markdown.preserve_quoted_prose` to `true` in `config.json` (boolean, default `false`) preserves every quoted run of prose rather than only the emphasised ones; a value that is not a boolean is a fatal config error, as for `exclude_paths`. That opt-in mode is deliberately blunt: an unclosed double or curly-double quotation mark, an inch mark such as `5"` among them, preserves the rest of its paragraph, so spellings after it are left alone. Straight single quotes need a pair, so apostrophes, elisions (`'cause`, `‘Tis`), decades (`'90s`) and possessives still convert in both modes.
+
 ### Code File Handling
 
 For code files, the tool intelligently handles context:
@@ -264,30 +274,6 @@ export BRITFIX_LOG=/tmp/britfix.log
 
 Then watch: `tail -f /tmp/britfix.log`
 
-## Development
-
-```bash
-just sync          # Install dependencies
-just test          # Run tests
-just test-hook     # Test hook
-just build         # Build standalone binary
-just clean         # Remove build artefacts
-```
-
-## Licence
-
-MIT
-
-### Markdown references and URLs
-
-Bare HTTP(S) URLs, including query strings, fragments and balanced parentheses, are preserved. Apostrophes inside a URL remain URI data. Inline and image destinations and reference identifiers are preserved; collapsed and shortcut labels remain unchanged where visible text also identifies the reference. Ordinary link text and surrounding prose still convert. HTML comments and script/style bodies are preserved.
-
-### Markdown quotations
-
-**New default:** explicit italicised quotations (`*"color"*` or `_“color”_`) are now preserved verbatim. This extends the existing blockquote protection; ordinary italic emphasis still converts.
-
-Ordinary unformatted quotations retain their previous conversion behaviour. To preserve them too, set `strategies.markdown.preserve_quoted_prose` to `true` in `config.json` (boolean, default `false`). This intentionally misses spelling corrections within quoted prose. Unclosed double/curly quotations preserve the remainder of their paragraph; straight single quotes require a pair, so leading elisions and decades do not hide the remainder of a paragraph.
-
 ### Python and file preservation
 
 Python files use tokenisation and AST docstring identification while retaining the `code:` ignore namespace. Non-docstring string literals, executable tokens, shebangs and technical references (backticks, dotted names such as `xref.finalize`, URLs, quotations and docstring parameter labels) remain unchanged. Other source languages retain their existing strategy.
@@ -302,3 +288,17 @@ In both modes, a non-docstring string literal whose whole value is an identifier
 Either Python parsing or tokenisation failure skips the whole file, so it receives no corrections at all; newer syntax unsupported by the running Python version is also skipped. If the positions reported by the tokeniser or parser ever disagree with the file text, the file is skipped rather than written. Files whose only line ending is a bare carriage return (`\r`) tokenise as a single line, so only a comment that opens the file is corrected; later comments are left unchanged (docstrings are still corrected under the default setting). Unsupported encodings are skipped rather than transcoded. The CLI emits `britfix: skipped` diagnostics and separate skipped counts; the hook relays those diagnostics to stderr. These are diagnostic records, not a model-interrupting hook response.
 
 UTF-8 BOMs and line endings survive automatic and interactive file I/O. Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.
+
+## Development
+
+```bash
+just sync          # Install dependencies
+just test          # Run tests
+just test-hook     # Test hook
+just build         # Build standalone binary
+just clean         # Remove build artefacts
+```
+
+## Licence
+
+MIT
