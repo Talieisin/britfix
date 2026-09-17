@@ -29,6 +29,7 @@
       "extensions": [".json"]
     },
     "code": {
+      "python_identifier_protection": "defined",
       "description": "Code - only convert comments and docstrings (not string literals)",
       "extensions": [
         ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h", ".hpp",

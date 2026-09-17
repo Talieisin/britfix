@@ -56,6 +56,10 @@ def _load_config() -> Dict:
     if not isinstance(quote_policy, bool):
         raise ConfigError("markdown.preserve_quoted_prose must be a boolean")
 
+    identifier_policy = strategies.get('code', {}).get('python_identifier_protection', 'defined')
+    if not isinstance(identifier_policy, str) or identifier_policy not in ('defined', 'all'):
+        raise ConfigError('code.python_identifier_protection must be "defined" or "all"')
+
     return config
 
 
@@ -1138,7 +1142,11 @@ def _build_file_strategies() -> Dict[str, Tuple[str, FileProcessingStrategy]]:
         strategy_instance = _STRATEGY_INSTANCES.get(strategy_name)
         if strategy_instance:
             for ext in strategy_config['extensions']:
-                strategies[ext.lower()] = (strategy_name, strategy_instance)
+                if strategy_name == 'code' and ext.lower() == '.py':
+                    from britfix_python import PythonStrategy
+                    strategies[ext.lower()] = ('code', PythonStrategy())
+                else:
+                    strategies[ext.lower()] = (strategy_name, strategy_instance)
 
     return strategies
 

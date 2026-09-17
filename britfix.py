@@ -7,6 +7,8 @@ import os
 import sys
 import glob
 import logging
+import json
+from britfix_python import ProcessingSkipped
 from collections import defaultdict, OrderedDict
 from pathlib import Path
 
@@ -128,10 +130,19 @@ def group_replacements_by_word(replacements: list) -> list:
     return list(groups.items())
 
 
+def read_source(filepath):
+    try:
+        with open(filepath, 'r', encoding='utf-8', newline='') as stream:
+            text = stream.read()
+    except UnicodeDecodeError as exc:
+        raise ProcessingSkipped('unsupported encoding; expected UTF-8') from exc
+    bom = text.startswith('\ufeff')
+    return text[1:] if bom else text, bom
+
+
 def process_file_interactive(filepath: str, corrector: SpellingCorrector, strategy) -> tuple:
     """Process a file with enhanced interactive approval."""
-    with open(filepath, 'r', encoding='utf-8') as f:
-        content = f.read()
+    content, _ = read_source(filepath)
 
     # Find replacements filtered by strategy segmentation rules
     replacements = strategy.find_safe_replacements(content, corrector)
@@ -384,6 +395,8 @@ Examples:
     # Process each file
     total_changes = defaultdict(int)
     processed_files = []
+    scanned_files = 0
+    skipped_files = 0
     
     for filepath in files:
         if not os.path.exists(filepath):
@@ -409,20 +422,19 @@ Examples:
                 scoped_phrases=file_scoped_phrases,
             )
 
+            content, had_bom = read_source(filepath)
+
             # Process the file
             if args.interactive:
                 if not strategy.supports_interactive:
                     print(f"britfix: interactive mode not supported for this file type, processing non-interactively: {filepath}", file=sys.stderr)
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        content = f.read()
                     corrected_content, file_changes = strategy.process(content, file_corrector)
                 else:
                     corrected_content, file_changes = process_file_interactive(filepath, file_corrector, strategy)
             else:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    content = f.read()
                 corrected_content, file_changes = strategy.process(content, file_corrector)
             
+            scanned_files += 1
             if file_changes:
                 processed_files.append((filepath, file_changes))
                 
@@ -437,8 +449,8 @@ Examples:
                         backup_path = create_backup(filepath)
                     
                     # Write corrected content
-                    with open(filepath, 'w', encoding='utf-8') as f:
-                        f.write(corrected_content)
+                    with open(filepath, 'w', encoding='utf-8', newline='') as f:
+                        f.write(('\ufeff' if had_bom else '') + corrected_content)
                     
                     if not args.quiet:
                         if backup_path:
@@ -449,6 +461,11 @@ Examples:
                 if not args.quiet:
                     logging.info(f"No changes needed: {filepath}")
                     
+        except ProcessingSkipped as exc:
+            skipped_files += 1
+            detail = json.dumps({'path': filepath, 'reason': str(exc)}, ensure_ascii=True)
+            print(f' britfix: skipped {detail}'.lstrip(), file=sys.stderr)
+            continue
         except Exception as e:
             logging.error(f"Error processing {filepath}: {e}")
             continue
@@ -469,8 +486,10 @@ Examples:
         print(f"\nTotal changes across all files:")
         for word, count in sorted(total_changes.items(), key=lambda x: (-x[1], x[0])):
             print(f"  {word} -> {american_to_british[word]}: {count} occurrence(s)")
-    else:
+    elif not skipped_files:
         print("\nNo changes were needed in any files.")
+    if skipped_files:
+        print(f"Processed: {scanned_files}; changed: {len(processed_files)}; skipped: {skipped_files}")
 
 
 if __name__ == "__main__":

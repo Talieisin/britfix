@@ -274,6 +274,21 @@ export BRITFIX_LOG=/tmp/britfix.log
 
 Then watch: `tail -f /tmp/britfix.log`
 
+### Python and file preservation
+
+Python files use tokenisation and AST docstring identification while retaining the `code:` ignore namespace. Non-docstring string literals, executable tokens, shebangs and technical references (backticks, dotted names such as `xref.finalize`, URLs, quotations and docstring parameter labels) remain unchanged. Other source languages retain their existing strategy.
+
+Words that name a Python identifier are also left alone in comments and docstrings. Matching is file-local and case-sensitive, and is controlled by `strategies.code.python_identifier_protection` in `config.json`:
+
+- `"defined"` (default): only names the file itself defines protect their prose mentions. That covers function and class names; parameters, including `*args`, `**kwargs`, keyword-only and lambda parameters; assignment, `for`, `with ... as`, `except ... as`, comprehension, walrus and `match` capture targets; attributes assigned in the file (`self.color = ...`); `global` and `nonlocal` names; import bindings (the `as` name, or the first segment of `import a.b`); and type parameters and aliases. Names that are only used, such as a library keyword argument (`ax.plot(color="red")`) or an attribute that is read or called, protect nothing, so `# Pick a color` in that file still becomes `# Pick a colour`.
+- `"all"`: every name token anywhere in the file protects its prose mentions. This misses more ordinary corrections.
+
+In both modes, a non-docstring string literal whose whole value is an identifier (such as `"color"`) also protects its prose mentions. Any other value for the setting is a fatal config error.
+
+Either Python parsing or tokenisation failure skips the whole file, so it receives no corrections at all; newer syntax unsupported by the running Python version is also skipped. If the positions reported by the tokeniser or parser ever disagree with the file text, the file is skipped rather than written. Files whose only line ending is a bare carriage return (`\r`) tokenise as a single line, so only a comment that opens the file is corrected; later comments are left unchanged (docstrings are still corrected under the default setting). Unsupported encodings are skipped rather than transcoded. The CLI emits `britfix: skipped` diagnostics and separate skipped counts; the hook relays those diagnostics to stderr. These are diagnostic records, not a model-interrupting hook response.
+
+UTF-8 BOMs and line endings survive automatic and interactive file I/O. Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.
+
 ## Development
 
 ```bash
