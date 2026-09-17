@@ -559,7 +559,9 @@ class LaTeXStrategy(FileProcessingStrategy):
             r'\$\$[^$]+\$\$',          # Display math
         ]
         
-        # Split content into segments
+        # Split content into segments. re.split interleaves captured matches at odd
+        # indices only while the pattern has exactly one capturing group, so the
+        # alternatives above must not contain capturing groups of their own.
         combined_pattern = '(' + '|'.join(preserve_patterns) + ')'
         segments = re.split(combined_pattern, content)
         
