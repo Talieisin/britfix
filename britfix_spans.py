@@ -103,7 +103,7 @@ def balanced_end(text, start, opening='[', closing=']', limit=None):
 
 def url_spans(text):
     spans = []
-    for match in re.finditer(r'https?://[^\s<>"`]+', text, re.I):
+    for match in re.finditer(r'https?://[^\s<>"`{}\\]+', text, re.I):
         start, end = match.span()
         # A quote immediately before the URL can wrap it; apostrophes within
         # a URI are legal sub-delimiters and never terminate a bare URL.

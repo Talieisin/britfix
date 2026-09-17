@@ -2,8 +2,8 @@ from britfix_core import LaTeXStrategy, SpellingCorrector
 
 
 def test_every_preserved_alternative_stays_intact():
-    source = r"color \textbf{color} behavior \color center $color$ favorite $$behavior$$"
-    expected = r"colour \textbf{color} behaviour \color centre $color$ favourite $$behavior$$"
+    source = r"color \custom{color} behavior \color center $color$ favorite $$behavior$$"
+    expected = r"colour \custom{color} behaviour \color centre $color$ favourite $$behavior$$"
     corrector = SpellingCorrector({
         "color": "colour", "behavior": "behaviour",
         "center": "centre", "favorite": "favourite",

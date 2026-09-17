@@ -52,9 +52,10 @@ def _load_config() -> Dict:
         if not strategy['extensions']:
             raise ConfigError(f"Strategy '{name}' has no extensions defined")
 
-    quote_policy = strategies.get('markdown', {}).get('preserve_quoted_prose', False)
-    if not isinstance(quote_policy, bool):
-        raise ConfigError("markdown.preserve_quoted_prose must be a boolean")
+    for name in ('markdown', 'latex'):
+        quote_policy = strategies.get(name, {}).get('preserve_quoted_prose', False)
+        if not isinstance(quote_policy, bool):
+            raise ConfigError(f"{name}.preserve_quoted_prose must be a boolean")
 
     identifier_policy = strategies.get('code', {}).get('python_identifier_protection', 'defined')
     if not isinstance(identifier_policy, str) or identifier_policy not in ('defined', 'all'):
@@ -570,37 +571,24 @@ class MarkdownStrategy(FileProcessingStrategy):
 
 
 class LaTeXStrategy(FileProcessingStrategy):
-    """Process LaTeX files, preserving commands."""
-    
-    def process(self, content: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
-        # Patterns to preserve
-        preserve_patterns = [
-            r'\\[a-zA-Z]+\{[^}]*\}',  # LaTeX commands with arguments
-            r'\\[a-zA-Z]+',            # LaTeX commands without arguments
-            r'\$[^$]+\$',              # Inline math
-            r'\$\$[^$]+\$\$',          # Display math
-        ]
-        
-        # Split content into segments. re.split interleaves captured matches at odd
-        # indices only while the pattern has exactly one capturing group, so the
-        # alternatives above must not contain capturing groups of their own.
-        combined_pattern = '(' + '|'.join(preserve_patterns) + ')'
-        segments = re.split(combined_pattern, content)
-        
-        # Process only non-LaTeX segments
-        corrected_segments = []
-        total_changes = defaultdict(int)
-        
-        for i, segment in enumerate(segments):
-            if segment and i % 2 == 0:  # Even indices are non-LaTeX text
-                corrected, changes = corrector.correct_text(segment)
-                corrected_segments.append(corrected)
-                for word, count in changes.items():
-                    total_changes[word] += count
-            else:
-                corrected_segments.append(segment or '')
-                
-        return ''.join(corrected_segments), dict(total_changes)
+    """Correct bounded prose regions while preserving LaTeX syntax."""
+
+    partial_skips = ()
+
+    def find_safe_replacements(self, content, corrector):
+        from britfix_latex import latex_replacements
+        preserve_quotes = _CONFIG['strategies'].get('latex', {}).get('preserve_quoted_prose', False)
+        replacements, self.partial_skips = latex_replacements(content, corrector, preserve_quotes)
+        return replacements
+
+    def process(self, content, corrector):
+        replacements = self.find_safe_replacements(content, corrector)
+        result = content
+        counts = defaultdict(int)
+        for start, end, old, new in reversed(replacements):
+            result = result[:start] + new + result[end:]
+            counts[old.lower()] += 1
+        return result, dict(counts)
 
 
 class HTMLStrategy(FileProcessingStrategy):

@@ -289,6 +289,14 @@ Either Python parsing or tokenisation failure skips the whole file, so it receiv
 
 UTF-8 BOMs and line endings survive automatic and interactive file I/O. Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.
 
+### Bounded LaTeX prose handling
+
+LaTeX uses a balanced lexical scanner, not macro expansion. Command names, optional arguments, unknown macro arguments, mathematics, and verbatim/listings/minted regions are preserved. Mandatory arguments of standard text, heading, caption and footnote commands remain prose; `href` preserves its target but processes its visible text. Unterminated recognised structures preserve the affected remainder and produce `britfix: skipped` diagnostics with a partial-file count: an unclosed `$`, verbatim region, environment or command argument pauses correction to the end of the file. The argument of `\url`, `\path`, `\nolinkurl`, the target of `\href` and brace-delimited `\lstinline`/`\mintinline` code are read verbatim, so `%` and `\` inside them do not start a comment or escape.
+
+Custom catcode changes and arbitrary macro expansion are not supported. Unknown macros intentionally sacrifice corrections to preserve their arguments, so prose inside macros such as `\enquote`, `\todo`, `\textsc` or `\item[...]` labels is deliberately left alone. Escaped braces and comment delimiters are handled before balancing. The tests document the supported command/environment set.
+
+Quoted prose in LaTeX is corrected by default. To preserve it, set `strategies.latex.preserve_quoted_prose` to `true` in `config.json` (boolean, default `false`; a non-boolean value is a fatal config error). This is separate from the Markdown setting because a straight `"` in LaTeX is often an inch mark or a babel shorthand rather than a quotation.
+
 ## Development
 
 ```bash
