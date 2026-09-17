@@ -118,8 +118,10 @@ class TestRemovedMappings:
     Each of these was deleted because it wasn't a genuine US-to-UK spelling
     pair: archaic in both dialects (-gramme, waggon), distinct words/units
     (ton/tonne, groin/groyne), identical in both dialects (licensed/licensing),
-    or running in the wrong direction (practise family). See PRs #16, #32,
-    #36, #37, #40, #41, #42, #44.
+    running in the wrong direction (practise family), or sense-dependent,
+    where the US form is also correct British usage in technical prose
+    (disk, annex, meter, license). See PRs #16, #32, #36, #37, #40, #41,
+    #42, #44 and issue #72.
     """
 
     REMOVED = [
@@ -133,6 +135,7 @@ class TestRemovedMappings:
         "groin", "groins",
         "almanac", "almanacs", "ankle",
         "deflection", "inflection", "inflections", "reflection",
+        "disk", "disks", "annex", "meter", "meters", "license", "licenses",
     ]
 
     @pytest.mark.parametrize("word", REMOVED)
@@ -149,7 +152,8 @@ class TestRemovedMappings:
         # The removals must not take out the genuine dialect pairs nearby.
         assert corrector.correct_text("aerogram")[0] == "aerogramme"
         assert corrector.correct_text("The program is great.")[0] == "The programme is great."
-        assert corrector.correct_text("a license")[0] == "a licence"
+        assert corrector.correct_text("5 kilometer")[0] == "5 kilometre"
+        assert corrector.correct_text("a videodisk")[0] == "a videodisc"
 
 
 class TestCodeStrategy:
