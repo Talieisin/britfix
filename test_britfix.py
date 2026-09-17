@@ -123,6 +123,7 @@ class TestRemovedMappings:
     """
 
     REMOVED = [
+        "biased", "biasing", "ecumenical",
         "gram", "grams", "kilogram", "kilograms",
         "milligram", "milligrams", "centigram", "centigrams",
         "ton", "tons",
@@ -2278,6 +2279,16 @@ class TestJSONStrategyHeuristic:
         result, changes = strategy.process(content, corrector)
         assert result == '42'
         assert changes == {}
+
+
+@pytest.mark.parametrize("source, expected", [
+    ("edemas", "oedemas"), ("edematous", "oedematous"),
+    ("Edematous", "Oedematous"), ("EDEMAS", "OEDEMAS"),
+    ("oedemas", "oedemas"), ("oedematous", "oedematous"),
+])
+def test_oedema_additional_forms(source, expected):
+    corrector = SpellingCorrector(load_spelling_mappings())
+    assert corrector.correct_text(source)[0] == expected
 
 
 if __name__ == "__main__":
