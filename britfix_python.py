@@ -34,6 +34,18 @@ def _row_starts(content, pattern):
     return starts
 
 
+def _apply(content, replacements):
+    """Apply sorted, non-overlapping (start, end, old, new) replacements."""
+    parts = []
+    position = 0
+    for start, end, _, new in replacements:
+        parts.append(content[position:start])
+        parts.append(new)
+        position = end
+    parts.append(content[position:])
+    return ''.join(parts)
+
+
 def _inconsistent(detail):
     return ProcessingSkipped(f'Python offsets inconsistent: {detail}')
 
@@ -119,7 +131,7 @@ class PythonStrategy:
                         raise _inconsistent(f'comment at row {token.start[0]}')
                     if start == 0 and token.string.startswith('#!'):
                         continue
-                    regions.append((start, end))
+                    regions.append((start, end, False))
             string_starts = sorted(token_offset(t.start) for t in tokens if t.type == tokenize.STRING)
             for doc in docs:
                 start = ast_offset(doc.lineno, doc.col_offset)
@@ -134,19 +146,23 @@ class PythonStrategy:
                     raise _inconsistent(f'docstring at row {doc.lineno}') from exc
                 if literal != doc.value:
                     raise _inconsistent(f'docstring at row {doc.lineno}')
-                match = re.match(r'(?i)(?:r|u)?("""|\'\'\'|"|\')', raw)
+                match = re.match(r'(?i)(r|u)?("""|\'\'\'|"|\')', raw)
                 if not match:
                     continue
-                delimiter = match.group(1)
-                regions.append((start + match.end(), end - len(delimiter)))
+                delimiter = match.group(2)
+                escapes = (match.group(1) or '').lower() != 'r'
+                regions.append((start + match.end(), end - len(delimiter), escapes))
         except (IndexError, UnicodeDecodeError) as exc:
             raise _inconsistent(str(exc)) from exc
 
         replacements = []
-        for start, end in regions:
+        for start, end, escapes in regions:
             prose = content[start:end]
             protected = quotation_spans(prose, True) + url_spans(prose)
             protected += [m.span() for m in re.finditer(r'`+[^`]*`+|\b\w+(?:\.\w+)+\b|\\(?:\r?\n|.)', prose)]
+            if escapes:
+                # A named escape such as \N{...} is part of the string's value, not prose.
+                protected += [m.span() for m in re.finditer(r'\\N\{[^}]*\}', prose)]
             # Parameter labels: Google/NumPy and Sphinx forms.
             protected += [m.span() for m in re.finditer(
                 r'(?m)^[ \t]*(?:\*{0,2}\w+[ \t]*:|:param[ \t]+[^:\r\n]+:)', prose)]
@@ -158,13 +174,18 @@ class PythonStrategy:
         for start, end, old, _ in replacements:
             if content[start:end] != old:
                 raise _inconsistent(f'replacement at offset {start}')
-        return sorted(replacements)
+        replacements.sort()
+        if replacements:
+            # Safety net: the source parsed, so the corrected source must parse too.
+            try:
+                ast.parse(_apply(content, replacements))
+            except (SyntaxError, ValueError) as exc:
+                raise ProcessingSkipped(f'Python correction would break parsing: {exc}') from exc
+        return replacements
 
     def process(self, content, corrector):
         replacements = self.find_safe_replacements(content, corrector)
         counts = {}
-        result = content
-        for start, end, old, new in reversed(replacements):
-            result = result[:start] + new + result[end:]
+        for _, _, old, _ in replacements:
             counts[old.lower()] = counts.get(old.lower(), 0) + 1
-        return result, counts
+        return _apply(content, replacements), counts

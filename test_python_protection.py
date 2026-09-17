@@ -210,17 +210,6 @@ def test_lone_cr_before_docstring_uses_parser_rows(words, mode):
     assert PythonStrategy(mode).process(source, words)[0] == expected
 
 
-@pytest.mark.parametrize('mode', MODES)
-def test_cr_only_file_is_not_corrupted(words, mode):
-    source = 'def f():\r    """The color was analyzed."""\r    return 1\r# The behavior\r# The color\r'
-    result, _ = PythonStrategy(mode).process(source, words)
-    if mode == 'defined':
-        # Under 'all' the tokenizer lexes CR-joined text as NAME tokens, protecting it.
-        assert '"""The colour was analysed."""' in result
-    assert to_us(result) == source
-    assert ast.dump(ast.parse(to_us(result))) == ast.dump(ast.parse(source))
-
-
 def shifted_rows(real, which, delta=1):
     def fake(content, pattern):
         starts = real(content, pattern)
@@ -402,3 +391,62 @@ def test_shipped_default_is_defined():
     assert core._CONFIG['strategies']['code']['python_identifier_protection'] == 'defined'
     with pytest.raises(ValueError):
         PythonStrategy('Defined')
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_cr_only_file_is_not_corrupted(words, mode):
+    # Only a comment that opens the file tokenises as COMMENT; later comments stay unchanged.
+    source = 'def f():\r    """The color was analyzed."""\r    return 1\r# The behavior\r# The color\r'
+    result, _ = PythonStrategy(mode).process(source, words)
+    assert result.endswith('    return 1\r# The behavior\r# The color\r')
+    assert to_us(result) == source
+    if mode == 'defined':
+        # Under 'all' the tokenizer lexes CR-joined text as NAME tokens, protecting it.
+        assert '"""The colour was analysed."""' in result
+
+    source = '# The color opens\rdef f():\r    """The color was analyzed."""\r    return 1\r# The behavior\r'
+    result, _ = PythonStrategy(mode).process(source, words)
+    assert result.startswith('# The colour opens\r')
+    assert result.endswith('    return 1\r# The behavior\r')
+    assert to_us(result) == source
+    ast.parse(result)
+    if mode == 'defined':
+        assert result == ('# The colour opens\rdef f():\r    """The colour was analysed."""\r'
+                          '    return 1\r# The behavior\r')
+
+
+NAMED_ESCAPE_WORDS = dict(WORDS, airplane='aeroplane')
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('source', [
+    'def f():\n    """Icon is \\N{AIRPLANE} in color."""\n',
+    'def f():\n    """Icon is \\N{airplane} in color."""\n',
+    '"""Icon is \\N{AIRPLANE} in color."""\n',
+    "class C:\n    '''Icon is \\N{airplane} in color.'''\n",
+])
+def test_named_unicode_escape_in_docstring_preserved(mode, source):
+    result, _ = PythonStrategy(mode).process(source, core.SpellingCorrector(NAMED_ESCAPE_WORDS))
+    assert result == source.replace('in color', 'in colour')
+    ast.parse(result)
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_raw_docstring_named_escape_is_literal_text(mode):
+    source = 'def f():\n    r"""Icon is \\N{airplane} in color."""\n'
+    result, _ = PythonStrategy(mode).process(source, core.SpellingCorrector(NAMED_ESCAPE_WORDS))
+    assert 'in colour' in result
+    assert ast.parse(result)
+
+
+def test_safety_net_skips_when_correction_breaks_parsing():
+    class Breaking:
+        def find_replacements(self, text):
+            index = text.find('color')
+            return [] if index < 0 else [(index, index + 5, 'color', 'col"""or')]
+
+    source = 'def f():\n    """The color."""\n'
+    with pytest.raises(ProcessingSkipped, match='would break parsing'):
+        PythonStrategy('defined').process(source, Breaking())
+    with pytest.raises(ProcessingSkipped, match='would break parsing'):
+        PythonStrategy('defined').find_safe_replacements(source, Breaking())
