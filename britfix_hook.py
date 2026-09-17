@@ -187,7 +187,7 @@ def run_britfix(file_path: str) -> tuple[bool, str]:
         
         for line in result.stderr.splitlines():
             if line.startswith('britfix: skipped '):
-                print(line, file=sys.stderr)
+                log(line)
         if result.returncode == 0:
             # Check stdout for change info (not stderr!)
             output = result.stdout

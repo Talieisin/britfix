@@ -118,9 +118,12 @@ def test_cli_skip_summary_and_hook_relay(tmp_path, monkeypatch, capsys):
     assert 'skipped: 1' in result.stdout
     assert 'No changes were needed' not in result.stdout
     assert path.read_text() == 'def f(color:'
+    log_path = tmp_path / 'hook.log'
+    monkeypatch.setattr(britfix_hook, 'LOG_FILE', str(log_path))
     monkeypatch.setattr(britfix_hook.subprocess, 'run', lambda *a, **k: result)
     assert britfix_hook.run_britfix(str(path))[0]
     assert 'britfix: skipped ' in capsys.readouterr().err
+    assert 'britfix: skipped ' in log_path.read_text()
 
 
 def test_invalid_utf8_skip(tmp_path):
