@@ -2,6 +2,7 @@
 
 import bisect
 import re
+import unicodedata
 import uuid
 
 
@@ -478,50 +479,177 @@ def normalise_label(label):
     return ' '.join(re.sub(r'\\([!"#$%&\'()*+,\-./:;<=>?@\[\]\\^_`{|}~])', r'\1', label).split()).casefold()
 
 
+_QUOTES = {'"': '"', "'": "'", '\u201c': '\u201d', '\u2018': '\u2019'}
+_QUOTE = re.compile('["\'\u201c\u2018]')
+_EMPHASISED_QUOTE = re.compile('[*_]["\'\u201c\u2018]')
+# Leading elisions and decades are apostrophes, not the start of a quotation.
+_ELISION = re.compile(r"(?:\d{2}s|cause|em|tis|twas|til)\b", re.I)
+# Categories that may sit before a delimiter run that opens emphasis: an
+# opening bracket (Ps) or an opening quote (Pi). Whitespace and the start of
+# the text are handled separately.
+_OPENING_PUNCTUATION = ('Ps', 'Pi')
+
+
+def _escaped(text, pos):
+    """True if the character at pos is preceded by an odd run of backslashes."""
+    start = pos
+    while start and text[start - 1] == '\\':
+        start -= 1
+    return (pos - start) % 2 == 1
+
+
+def _emphasis_flanked(text, start, end):
+    """Whether delimiter runs at start and end flank their content as emphasis.
+
+    Deliberately stricter than CommonMark, which also accepts a run preceded by
+    any punctuation: a run glued to a path or a glob (``src/*``) must not open a
+    quotation. Missing a protection is safer here than protecting prose that
+    was never quoted.
+    """
+    if start:
+        before = text[start - 1]
+        if not (before.isspace() or unicodedata.category(before) in _OPENING_PUNCTUATION):
+            return False
+    if end < len(text):
+        after = text[end]
+        if not (after.isspace() or unicodedata.category(after).startswith('P')):
+            return False
+    return True
+
+
+def _verbatim_regions(text):
+    """Code blocks, blockquotes and inline code, as the Markdown strategy sees them.
+
+    Built from the same primitives markdown_spans uses, so both agree on which
+    regions are code; quotation marks inside them are never scanned.
+    """
+    from britfix_core import MarkdownStrategy
+
+    markdown = MarkdownStrategy()
+    n = len(text)
+    regions = []
+    backticks = {}
+    pos = 0
+    while pos < n:
+        if pos == 0 or text[pos - 1] == '\n':
+            end = _code_block_end(markdown, text, pos)
+            if end is not None:
+                regions.append((pos, end))
+                pos = end
+                continue
+        match = _STRUCTURE.search(text, pos)
+        if not match:
+            break
+        p = match.start()
+        if text[p] != '`':
+            pos = p + 1
+            continue
+        run = match.end() - p
+        if run not in backticks:
+            backticks[run] = _literal_finder(text, '`' * run)
+        hit = backticks[run](p + run)
+        if hit is None:
+            # As in the strategy: step one backtick and retry shorter runs.
+            pos = p + 1
+        else:
+            regions.append((p, hit[1]))
+            pos = hit[1]
+    return regions
+
+
 def quotation_spans(text, all_quotes=False):
-    """Explicit italic quotations are verbatim; broader prose quoting is opt-in."""
+    """Emphasised quotations are verbatim; broader prose quoting is opt-in."""
+    n = len(text)
     spans = []
-    pairs = {'"': '"', "'": "'", '\u201c': '\u201d', '\u2018': '\u2019'}
-    i = 0
-    while i < len(text):
+    regions = _verbatim_regions(text)
+    starts = [start for start, _ in regions]
+    # One pass for paragraph ends, then a lookup per quotation: recomputing the
+    # boundary from every quotation mark is quadratic on a long paragraph.
+    boundaries = [max(m.start() - 1, 0) for m in _BOUNDARY.finditer(text)] + [n]
+
+    def paragraph_end(pos):
+        return boundaries[bisect.bisect_right(boundaries, pos)] if pos < n else n
+
+    def region_at(pos):
+        k = bisect.bisect_right(starts, pos) - 1
+        return regions[k] if k >= 0 and pos < regions[k][1] else None
+
+    # Only a quotation mark glued to an emphasis delimiter can open a protected
+    # span by default, so the default scan skips every other quotation mark.
+    candidate = _QUOTE if all_quotes else _EMPHASISED_QUOTE
+    pos = 0
+    while pos < n:
+        match = candidate.search(text, pos)
+        if not match:
+            break
+        i = match.end() - 1
+        region = region_at(i)
+        if region:
+            pos = region[1]
+            continue
         opening = text[i]
-        if opening == '\\':
-            i += 2
+        if _escaped(text, i):
+            pos = i + 1
             continue
-        if opening not in pairs:
-            i += 1
-            continue
-        # Apostrophes inside words or immediately after a word are not openers.
-        if opening in ("'", '\u2018') and i and text[i - 1].isalnum():
-            i += 1
-            continue
-        if opening == "'" and re.match(r"(?:\d{2}s|cause|em|tis|twas|til)\b", text[i + 1:], re.I):
-            i += 1
-            continue
-        italic = i > 0 and text[i - 1] in '*_'
-        paragraph = re.search(r'\r?\n[ \t]*\r?\n', text[i:])
-        limit = i + paragraph.start() if paragraph else len(text)
-        closing = pairs[opening]
+        if opening in ("'", '\u2018'):
+            # Apostrophes inside or straight after a word are not openers, and
+            # nor are leading elisions and decades.
+            if (i and text[i - 1].isalnum()) or _ELISION.match(text, i + 1):
+                pos = i + 1
+                continue
+        delimiter = text[i - 1] if i and text[i - 1] in '*_' else None
+        run_start = i
+        if delimiter:
+            while run_start and text[run_start - 1] == delimiter:
+                run_start -= 1
+        limit = paragraph_end(i)
+        closing = _QUOTES[opening]
+        # Step over whole code regions: a quotation mark inside code must not
+        # close a quotation opened in prose, and a span must never cover part
+        # of a code region.
+        k = bisect.bisect_left(starts, i + 1)
+        block = starts[k] if k < len(regions) else n
         j = i + 1
         while j < limit:
+            if j >= block:
+                j = regions[k][1]
+                k += 1
+                block = starts[k] if k < len(regions) else n
+                continue
             if text[j] == '\\':
                 j += 2
                 continue
             if text[j] == closing:
                 # An apostrophe within a word cannot close a quoted phrase.
-                if closing in ("'", '\u2019') and j + 1 < len(text) and text[j + 1].isalnum():
+                if closing in ("'", '\u2019') and j + 1 < n and text[j + 1].isalnum():
                     j += 1
                     continue
                 break
             j += 1
         matched = j < limit
-        italic = italic and matched and text[j + 1:j + 2] == text[i - 1]
-        if matched and (all_quotes or italic):
-            spans.append((i - 1 if italic else i, j + 2 if italic else j + 1))
-            i = j + 1
+        emphasised = False
+        run_end = j + 1
+        if matched and delimiter:
+            end = j + 1
+            while end < n and text[end] == delimiter:
+                end += 1
+            # Equal runs either side, flanked as emphasis, or it is not one.
+            if end - (j + 1) == i - run_start and _emphasis_flanked(text, run_start, end):
+                emphasised = True
+                run_end = end
+        if matched and (all_quotes or emphasised):
+            spans.append((run_start if emphasised else i, run_end))
+            pos = run_end
         elif all_quotes and opening in ('"', '\u201c', '\u2018'):
-            spans.append((i, limit))
-            i = limit
+            # Unclosed: preserve the rest of the paragraph, but never half of a
+            # code region.
+            end = limit
+            region = region_at(end)
+            if region:
+                end = region[0]
+            if end > i:
+                spans.append((i, end))
+            pos = max(end, i + 1)
         else:
-            i += 1
+            pos = i + 1
     return spans
