@@ -81,7 +81,7 @@ def test_candidate_filter_matches_brute_force_overlap():
     import json as json_module
     import britfix_core as core
     from britfix_latex import latex_replacements, latex_spans
-    corrector = core.SpellingCorrector(json_module.load(open(Path(core.__file__).with_name('spelling-mapper.json'))))
+    corrector = core.SpellingCorrector(json_module.loads(Path(core.__file__).with_name('spelling-mapper.json').read_text()))
     pieces = [r'color \textbf{color}', r'\cite[color]{behavior}', '$color$', 'behavior',
               r'\href{https://example.org/color}{color}', '% color\n', r'\unknown{color}color', '\n\n']
     source = ' '.join(pieces[(k * 7) % len(pieces)] for k in range(400))
