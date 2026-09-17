@@ -57,7 +57,7 @@ Different file types are handled by different strategies, configured in `config.
 | Strategy | Extensions | Behaviour |
 |----------|------------|-----------|
 | **text** | `.txt` | Convert everything |
-| **markdown** | `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx` | Preserve code spans and code blocks |
+| **markdown** | `.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx` | Preserve code, blockquotes, HTML markup, URLs, and Markdown link/reference targets |
 | **latex** | `.tex` | Skip LaTeX commands and math |
 | **html** | `.html`, `.htm`, `.xml` | Skip HTML tags and `<style>`/`<script>` content |
 | **css** | `.css`, `.scss`, `.sass`, `.less` | Only convert comments |
@@ -69,6 +69,15 @@ Different file types are handled by different strategies, configured in `config.
 JSON values are corrected only when they contain whitespace. Single-token strings — `"center"`, `"colorScheme"`, `"src/Color.tsx"` — are treated as identifiers and left alone, since most JSON values in config files are programmatic, not prose. Multi-word values like `"The organization was reorganized"` are still corrected normally.
 
 To opt out of JSON correction entirely, add `json:*` to your `.britfixignore` (see the [strategy escape hatch](#format) below).
+
+### Markdown File Handling
+
+Markdown prose is corrected; code spans, fenced and indented code blocks, and blockquotes are left alone.
+
+- **URLs**: bare HTTP(S) URLs, including query strings, fragments and balanced parentheses, are preserved. Apostrophes inside a URL remain URI data. URLs without a scheme (`www.example.org`) are not recognised.
+- **Links and references**: inline and image destinations are preserved, as are reference identifiers at both the use site and the definition; collapsed and shortcut labels stay unchanged where the visible text also identifies the reference. Ordinary link text and surrounding prose still convert. A reference definition keeps its label, destination and title verbatim; a line that only looks like one (for example `[Note]: some sentence` with trailing words) is treated as prose.
+- **Footnotes**: the footnote label (`[^note]`) is kept at its definition and use sites, but the footnote text itself is corrected.
+- **HTML**: tags and their attributes, HTML comments, and `<script>`/`<style>` bodies are preserved. Text inside HTML comments is kept verbatim; this is a deliberate change, as earlier versions corrected comment text. Markup written inside code is not treated as markup. An HTML comment, `<script>` or `<style>` that starts at the beginning of a line runs to its closing marker, even across blank lines. One that is never closed, or that starts mid-line and is not closed within its paragraph, is protected only to the end of that paragraph (or to the next code fence or backtick), so correction resumes afterwards instead of stopping for the rest of the file.
 
 ### Code File Handling
 
