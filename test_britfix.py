@@ -120,7 +120,7 @@ class TestRemovedMappings:
     (ton/tonne, groin/groyne), identical in both dialects (licensed/licensing),
     running in the wrong direction (practise family), or sense-dependent,
     where a common sense is spelt the same in British English (disk, annex,
-    meter, license). See PRs #16, #32, #36, #37, #40, #41, #42, #44 and
+    meter, micrometer, license). See PRs #16, #32, #36, #37, #40, #41, #42, #44 and
     issue #72.
     """
 
@@ -136,6 +136,7 @@ class TestRemovedMappings:
         "almanac", "almanacs", "ankle",
         "deflection", "inflection", "inflections", "reflection",
         "disk", "disks", "annex", "meter", "meters", "license", "licenses",
+        "micrometer", "micrometers",
     ]
 
     @pytest.mark.parametrize("word", REMOVED)
