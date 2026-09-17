@@ -52,9 +52,10 @@ def _load_config() -> Dict:
         if not strategy['extensions']:
             raise ConfigError(f"Strategy '{name}' has no extensions defined")
 
-    quote_policy = strategies.get('markdown', {}).get('preserve_quoted_prose', False)
-    if not isinstance(quote_policy, bool):
-        raise ConfigError("markdown.preserve_quoted_prose must be a boolean")
+    for name in ('markdown', 'latex'):
+        quote_policy = strategies.get(name, {}).get('preserve_quoted_prose', False)
+        if not isinstance(quote_policy, bool):
+            raise ConfigError(f"{name}.preserve_quoted_prose must be a boolean")
 
     return config
 
@@ -567,7 +568,8 @@ class LaTeXStrategy(FileProcessingStrategy):
 
     def find_safe_replacements(self, content, corrector):
         from britfix_latex import latex_replacements
-        replacements, self.partial_skips = latex_replacements(content, corrector)
+        preserve_quotes = _CONFIG['strategies'].get('latex', {}).get('preserve_quoted_prose', False)
+        replacements, self.partial_skips = latex_replacements(content, corrector, preserve_quotes)
         return replacements
 
     def process(self, content, corrector):

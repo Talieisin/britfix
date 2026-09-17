@@ -63,8 +63,10 @@ def find_delimiter(text, delimiter, start, limit):
     return None
 
 
-def latex_spans(text):
-    spans = url_spans(text) + quotation_spans(text, True)
+def latex_spans(text, preserve_quotes=False):
+    spans = url_spans(text)
+    if preserve_quotes:
+        spans += quotation_spans(text, True)
     notes = []
 
     def unfinished(start, reason):
@@ -189,8 +191,8 @@ def latex_spans(text):
     return merge_spans(spans), notes
 
 
-def latex_replacements(text, corrector):
-    spans, notes = latex_spans(text)
+def latex_replacements(text, corrector, preserve_quotes=False):
+    spans, notes = latex_spans(text, preserve_quotes)
     starts = [start for start, _ in spans]
     candidates = []
     for r in corrector.find_replacements(text):

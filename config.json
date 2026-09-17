@@ -13,6 +13,7 @@
       "extensions": [".md", ".markdown", ".mdown", ".mkd", ".mdx"]
     },
     "latex": {
+      "preserve_quoted_prose": false,
       "description": "LaTeX - preserve syntax, math and verbatim; correct known prose arguments",
       "extensions": [".tex"]
     },

@@ -91,3 +91,36 @@ def test_candidate_filter_matches_brute_force_overlap():
     assert latex_replacements(source, corrector)[0] == expected
     # A span ending exactly where a candidate starts does not hide it.
     assert LaTeXStrategy().process(r'\unknown{x}color', corrector)[0] == r'\unknown{x}colour'
+
+
+QUOTED = [
+    ('She said "the color is licensed" and left.', 'She said "the colour is licensed" and left.'),
+    ('A 5" color monitor, then behavior.', 'A 5" colour monitor, then behaviour.'),
+]
+
+
+@pytest.mark.parametrize('source, expected', QUOTED)
+def test_quoted_prose_corrected_by_default(corrector, source, expected):
+    strategy = LaTeXStrategy()
+    assert strategy.process(source, corrector)[0] == expected
+    assert not strategy.partial_skips
+
+
+def test_quoted_prose_preserved_when_enabled(monkeypatch, corrector):
+    import britfix_core as core
+    monkeypatch.setitem(core._CONFIG['strategies']['latex'], 'preserve_quoted_prose', True)
+    source = 'color "color behavior" behavior'
+    assert LaTeXStrategy().process(source, corrector)[0] == 'colour "color behavior" behaviour'
+
+
+@pytest.mark.parametrize('value', ['true', 1, None])
+def test_non_boolean_latex_quote_policy_rejected(monkeypatch, value):
+    import copy
+    import io
+    import json as json_module
+    import britfix_core as core
+    config = copy.deepcopy(core._CONFIG)
+    config['strategies']['latex']['preserve_quoted_prose'] = value
+    monkeypatch.setattr('builtins.open', lambda *a, **k: io.StringIO(json_module.dumps(config)))
+    with pytest.raises(core.ConfigError, match='latex.preserve_quoted_prose must be a boolean'):
+        core._load_config()
