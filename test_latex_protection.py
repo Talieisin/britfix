@@ -75,3 +75,19 @@ def test_math_terminator_respects_comments_and_escapes(corrector, inert_end):
     strategy = LaTeXStrategy()
     assert strategy.process(source, corrector)[0] == 'colour ' + equation + ' behaviour'
     assert not strategy.partial_skips
+
+
+def test_candidate_filter_matches_brute_force_overlap():
+    import json as json_module
+    import britfix_core as core
+    from britfix_latex import latex_replacements, latex_spans
+    corrector = core.SpellingCorrector(json_module.load(open(Path(core.__file__).with_name('spelling-mapper.json'))))
+    pieces = [r'color \textbf{color}', r'\cite[color]{behavior}', '$color$', 'behavior',
+              r'\href{https://example.org/color}{color}', '% color\n', r'\unknown{color}color', '\n\n']
+    source = ' '.join(pieces[(k * 7) % len(pieces)] for k in range(400))
+    spans, _ = latex_spans(source)
+    expected = [r for r in corrector.find_replacements(source)
+                if not any(a < r[1] and r[0] < b for a, b in spans)]
+    assert latex_replacements(source, corrector)[0] == expected
+    # A span ending exactly where a candidate starts does not hide it.
+    assert LaTeXStrategy().process(r'\unknown{x}color', corrector)[0] == r'\unknown{x}colour'

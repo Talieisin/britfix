@@ -1,5 +1,6 @@
 """Bounded LaTeX lexical protection; does not expand macros or catcodes."""
 
+import bisect
 import re
 
 from britfix_spans import merge_spans, quotation_spans, url_spans
@@ -15,6 +16,7 @@ PROTECTED_ENVIRONMENTS = {
     'multline', 'eqnarray', 'verbatim', 'Verbatim', 'lstlisting', 'minted',
 }
 VERBATIM_ENVIRONMENTS = {'verbatim', 'Verbatim', 'lstlisting', 'minted'}
+COMMAND = re.compile(r'\\([A-Za-z@]+\*?|.)', re.S)
 
 
 def group_end(text, start, limit):
@@ -97,12 +99,12 @@ def latex_spans(text):
             if text[i] != '\\':
                 i += 1
                 continue
-            command = re.match(r'\\([A-Za-z@]+\*?|.)', text[i:limit], re.S)
+            command = COMMAND.match(text, i, limit)
             if not command:
                 spans.append((i, limit))
                 return
             name = command.group(1).rstrip('*')
-            command_end = i + command.end()
+            command_end = command.end()
             spans.append((i, command_end))
             if len(command.group(1)) == 1 and not command.group(1).isalpha():
                 i = command_end
@@ -189,6 +191,12 @@ def latex_spans(text):
 
 def latex_replacements(text, corrector):
     spans, notes = latex_spans(text)
-    candidates = [r for r in corrector.find_replacements(text)
-                  if not any(a < r[1] and r[0] < b for a, b in spans)]
+    starts = [start for start, _ in spans]
+    candidates = []
+    for r in corrector.find_replacements(text):
+        # Merged spans are sorted and disjoint, so only the last span starting
+        # before the candidate ends can overlap it.
+        k = bisect.bisect_left(starts, r[1])
+        if not (k and spans[k - 1][1] > r[0]):
+            candidates.append(r)
     return candidates, notes
