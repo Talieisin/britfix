@@ -119,9 +119,9 @@ class TestRemovedMappings:
     pair: archaic in both dialects (-gramme, waggon), distinct words/units
     (ton/tonne, groin/groyne), identical in both dialects (licensed/licensing),
     running in the wrong direction (practise family), or sense-dependent,
-    where the US form is also correct British usage in technical prose
-    (disk, annex, meter, license). See PRs #16, #32, #36, #37, #40, #41,
-    #42, #44 and issue #72.
+    where a common sense is spelt the same in British English (disk, annex,
+    meter, license). See PRs #16, #32, #36, #37, #40, #41, #42, #44 and
+    issue #72.
     """
 
     REMOVED = [
