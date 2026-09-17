@@ -2280,10 +2280,6 @@ class TestJSONStrategyHeuristic:
         assert changes == {}
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
 @pytest.mark.parametrize("source, expected", [
     ("edemas", "oedemas"), ("edematous", "oedematous"),
     ("Edematous", "Oedematous"), ("EDEMAS", "OEDEMAS"),
@@ -2292,3 +2288,7 @@ if __name__ == "__main__":
 def test_oedema_additional_forms(source, expected):
     corrector = SpellingCorrector(load_spelling_mappings())
     assert corrector.correct_text(source)[0] == expected
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
