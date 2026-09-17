@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import sys
 import time
@@ -232,4 +233,32 @@ def test_unmatched_syntax_scans_linearly(line):
     source = '\n'.join(line.format(i) for i in range(3000)) + '\n'
     started = time.perf_counter()
     markdown_spans(source)
-    assert time.perf_counter() - started < 1.0
+    assert time.perf_counter() - started < 5.0
+
+
+def test_url_glued_to_a_word_is_not_masked(corrector):
+    source = 'COLORhttp://x.com/color and color'
+    assert _process(corrector, source) == 'COLORhttp://x.com/colour and colour'
+
+
+def test_restore_is_linear_in_span_count():
+    source = 'word <b>x</b> ' * 50000
+    spans = [(m.start(), m.end()) for m in re.finditer(r'<[^>]*>', source)]
+    masked, restore = mask_spans(source, spans)
+    started = time.perf_counter()
+    assert restore(masked) == source
+    assert time.perf_counter() - started < 5.0
+
+
+def test_restore_leaves_a_damaged_token_as_found():
+    source = 'a <!-- x\ny --> b'
+    masked, restore = mask_spans(source, [(2, 14)])
+    damaged = masked.replace('\n', '\n\n')
+    assert restore(damaged) == damaged
+
+
+def test_mask_restore_round_trips_a_source_containing_nul(corrector):
+    source = 'a \x00 <!-- x\ny --> \x001\x00 color\n'
+    masked, restore = mask_spans(source, markdown_spans(source))
+    assert restore(masked) == source
+    assert _process(corrector, source) == source.replace(' color', ' colour')

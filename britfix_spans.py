@@ -19,9 +19,15 @@ def merge_spans(spans):
 
 def mask_spans(text, spans):
     """Mask by source offsets, retaining line breaks for surrounding syntax."""
-    marker = uuid.uuid4().hex
-    while marker in text:
-        marker = uuid.uuid4().hex
+    # Tokens are scanned by the corrector, so their length costs time on large
+    # files. A NUL delimiter alone is enough when the source has none; failing
+    # that, a random marker the source does not contain is added.
+    prefix = '\x00'
+    if prefix in text:
+        marker = uuid.uuid4().hex[:8]
+        while marker in text:
+            marker = uuid.uuid4().hex[:8]
+        prefix = f'\x00{marker}:'
     originals = []
     pieces = []
     pos = 0
@@ -29,20 +35,40 @@ def mask_spans(text, spans):
         index = len(originals)
         original = text[start:end]
         breaks = ''.join(re.findall(r'\r\n|\r|\n', original))
-        replacement = f'\x00{marker}:{index}\x00' + breaks
+        replacement = f'{prefix}{index}\x00' + breaks
         if breaks and not original.endswith(('\n', '\r')):
             # Text after a multi-line span keeps a non-blank line prefix, so
             # following spaces are not read as an indented code block.
-            replacement += f'\x00{marker}:{index}:end\x00'
+            replacement += f'{prefix}{index}:e\x00'
         originals.append((replacement, original))
         pieces.extend((text[pos:start], replacement))
         pos = end
     pieces.append(text[pos:])
 
+    token = re.compile(re.escape(prefix) + r'(\d+)\x00')
+
     def restore(result):
-        for replacement, original in originals:
-            result = result.replace(replacement, original)
-        return result
+        # One pass: each leading token must be followed by the rest of its
+        # replacement; anything else is left as found.
+        pieces = []
+        pos = 0
+        search_from = 0
+        while True:
+            match = token.search(result, search_from)
+            if not match:
+                break
+            start = match.start()
+            index = int(match.group(1))
+            if index < len(originals):
+                replacement, original = originals[index]
+                if result.startswith(replacement, start):
+                    pieces.append(result[pos:start])
+                    pieces.append(original)
+                    pos = search_from = start + len(replacement)
+                    continue
+            search_from = match.end()
+        pieces.append(result[pos:])
+        return ''.join(pieces)
 
     return ''.join(pieces), restore
 
@@ -306,7 +332,9 @@ def markdown_spans(text):
     def paragraph_end(pos):
         return boundaries[bisect.bisect_right(boundaries, pos)] if pos < n else n
 
-    spans = url_spans(text)
+    # A URL glued to a preceding word is not an autolink; masking it would
+    # also split that word at a new boundary.
+    spans = [span for span in url_spans(text) if not (span[0] and text[span[0] - 1].isalnum())]
     code = []
     structural = []
     definitions = set()
