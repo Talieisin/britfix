@@ -88,12 +88,25 @@ except ConfigError as e:
 # CLI prints "Britfix config error: ..." and exits 1. The message text is the
 # hook's original wording, so its diagnostics did not change when it moved here.
 
-# config.local.json sits beside config.json and is resolved the same way, from
-# the module's own directory rather than the working directory, so the CLI
-# honours the same exclusions wherever it is run from. `just build` bundles
-# config.json but not this file, so a frozen binary sees committed exclusions
-# only; the hook runs the source tree, so the hook's own CLI path is covered.
-LOCAL_CONFIG_PATH = Path(os.path.dirname(os.path.abspath(__file__))) / 'config.local.json'
+def local_config_path() -> Path:
+    """Where config.local.json lives.
+
+    Beside config.json and resolved the same way, from the module's own
+    directory rather than the working directory, so the CLI honours the same
+    exclusions wherever it is run from. `just build` bundles config.json but not
+    this file, so a frozen binary sees committed exclusions only; the hook runs
+    the source tree, so the hook's own CLI path is covered.
+
+    BRITFIX_LOCAL_CONFIG overrides the location. That exists for the test suite:
+    several of its tests run britfix.py as a subprocess, where patching cannot
+    reach, and a developer exclusion as ordinary as '/private/' matches every
+    macOS temp directory. Pointing this at a path that does not exist is how the
+    suite keeps a personal config out of its own runs.
+    """
+    override = os.environ.get('BRITFIX_LOCAL_CONFIG')
+    if override is not None:
+        return Path(override)
+    return Path(os.path.dirname(os.path.abspath(__file__))) / 'config.local.json'
 
 
 def validate_exclude_paths(raw) -> list:
@@ -188,7 +201,7 @@ def get_exclude_paths() -> tuple:
     """
     global _EXCLUDE_PATHS
     if _EXCLUDE_PATHS is None:
-        _EXCLUDE_PATHS = load_exclude_paths(_CONFIG, LOCAL_CONFIG_PATH)
+        _EXCLUDE_PATHS = load_exclude_paths(_CONFIG, local_config_path())
     return _EXCLUDE_PATHS
 
 

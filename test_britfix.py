@@ -1646,6 +1646,17 @@ class TestLocalExcludeConfig:
         with pytest.raises(ConfigError):
             load_exclude_paths({'exclude_paths': ''}, tmp_path / 'config.local.json')
 
+    def test_default_location_is_beside_the_module(self, monkeypatch):
+        monkeypatch.delenv('BRITFIX_LOCAL_CONFIG', raising=False)
+        assert britfix_core.local_config_path() == (
+            Path(britfix_core.__file__).parent / 'config.local.json'
+        )
+
+    def test_environment_overrides_the_location(self, monkeypatch, tmp_path):
+        """How the suite keeps a developer's own exclusions out of its runs."""
+        monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(tmp_path / 'elsewhere.json'))
+        assert britfix_core.local_config_path() == tmp_path / 'elsewhere.json'
+
     def test_load_does_not_mutate_the_caller(self, tmp_path):
         """The core's own _CONFIG is passed here; appending to it would leak."""
         base = self._base()
@@ -1751,10 +1762,16 @@ class TestExclusionWiring:
         return tree
 
     def _run(self, tree, target):
+        """Without BRITFIX_LOCAL_CONFIG, so the default resolution is what is
+        under test: the copy must find the config.local.json beside its own
+        modules. The suite sets that variable for isolation, and inheriting it
+        here would mean testing the override instead of the thing it overrides.
+        """
+        env = {k: v for k, v in os.environ.items() if k != 'BRITFIX_LOCAL_CONFIG'}
         return subprocess.run(
             [sys.executable, str(tree / 'britfix.py'), '--input', str(target),
              '--no-backup', '--quiet'],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=env,
         )
 
     def test_local_config_protects_the_cli(self, tmp_path):
@@ -1825,11 +1842,19 @@ class TestHookAndCLIShareTheExclusionPolicy:
         assert seen == [tmp_path / 'config.local.json']
 
     def test_both_entry_points_load_the_same_exclusions(self):
-        """Loaded from the real files, not the ones the suite neutralises."""
+        """Loaded from the real files, not the ones the suite neutralises.
+
+        britfix_hook read them at import, before the suite's fixture was in
+        force, so this compares what the hook really holds against what the
+        core's loader really returns.
+        """
         import britfix_hook
 
         assert list(britfix_hook.EXCLUDE_PATHS) == list(
-            britfix_core.load_exclude_paths(britfix_core._CONFIG, britfix_core.LOCAL_CONFIG_PATH)
+            britfix_core.load_exclude_paths(
+                britfix_core._CONFIG,
+                Path(britfix_core.__file__).parent / 'config.local.json',
+            )
         )
 
 

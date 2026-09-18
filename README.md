@@ -287,6 +287,11 @@ The file is never bundled into the built binary, so a `just build` executable
 sees the committed `exclude_paths` only. The hook runs the source tree, so the
 hook and the britfix it invokes both see your local file.
 
+`BRITFIX_LOCAL_CONFIG` points both entry points at a different local config, or
+at a path that does not exist to ignore one. It exists so the test suite can
+keep your personal exclusions out of its own runs, including the tests that
+invoke `britfix.py` as a subprocess.
+
 ## Hook Integration
 
 The `britfix_hook.py` script integrates with tools that support hooks to automatically fix spellings when files are written.

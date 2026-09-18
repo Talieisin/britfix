@@ -19,16 +19,19 @@ def isolated_user_config(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def isolated_path_exclusions(monkeypatch):
+def isolated_path_exclusions(monkeypatch, tmp_path):
     """Ignore the developer's own config.local.json, which the CLI now reads.
 
     Since #85 the CLI skips a file whose resolved path contains a configured
     substring, and exclusions come from a gitignored config.local.json as well
     as from config.json. A developer entry as ordinary as '/private/' matches
-    every macOS tmp_path, so without this the suite would quietly stop
-    processing its own fixtures on that machine and pass anyway, which is the
-    failure this protection is meant to prevent, not cause.
+    every macOS tmp_path, so without this the suite would stop processing its
+    own fixtures on that machine.
 
-    Tests that exercise exclusions patch this again with what they need.
+    Both halves are needed. The environment variable is the one that reaches the
+    tests which run britfix.py as a subprocess, where patching this process
+    changes nothing; the attribute patch covers the in-process callers and is
+    what tests exercising exclusions override with what they need.
     """
+    monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(tmp_path / 'no-config.local.json'))
     monkeypatch.setattr(britfix_core, 'get_exclude_paths', lambda: ())

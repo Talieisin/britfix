@@ -34,12 +34,32 @@ def test_developer_exclusions_do_not_reach_the_suite(monkeypatch, tmp_path):
     local = tmp_path / 'config.local.json'
     local.write_text('{"exclude_paths": ["/"]}')
     monkeypatch.setattr(britfix_core, '_EXCLUDE_PATHS', None)
-    monkeypatch.setattr(britfix_core, 'LOCAL_CONFIG_PATH', local)
+    monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(local))
 
     # The loader would now exclude every path there is ...
     assert britfix_core.load_exclude_paths(britfix_core._CONFIG, local) == ('/',)
     # ... and the suite still sees none of it.
     assert britfix_core.get_exclude_paths() == ()
+
+
+def test_subprocess_runs_ignore_the_developer_config(tmp_path):
+    """The half of the isolation that patching cannot provide.
+
+    Several tests run britfix.py as a subprocess, which re-reads the config from
+    disk in a new process. Only the environment variable reaches those, so it is
+    what stops a personal config.local.json from deciding whether they pass.
+    """
+    assert os.environ['BRITFIX_LOCAL_CONFIG']
+    assert not Path(os.environ['BRITFIX_LOCAL_CONFIG']).exists()
+
+    probe = tmp_path / 'probe.md'
+    probe.write_text('The color.\n')
+    result = subprocess.run(
+        [sys.executable, 'britfix.py', '--input', str(probe), '--no-backup', '--quiet'],
+        cwd=Path(__file__).parent, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert probe.read_text() == 'The colour.\n', result.stdout + result.stderr
 
 
 def test_unset_xdg_uses_isolated_home(monkeypatch):

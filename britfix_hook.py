@@ -87,7 +87,9 @@ def load_config():
         sys.exit(1)
 
     config['exclude_paths'] = validate_exclude_paths(config.get('exclude_paths', []))
-    config = merge_local_config(config, HOOK_DIR / 'config.local.json')
+    # Through the core, so the hook and the CLI cannot end up reading different
+    # local files. Unset, this is HOOK_DIR / 'config.local.json' as before.
+    config = merge_local_config(config, britfix_core.local_config_path())
 
     return config
 
