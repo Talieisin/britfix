@@ -499,14 +499,52 @@ def test_summarise_explains_a_prefix_correction_that_keeps_its_hyphen():
     assert s['items'] == [(1, 'estr', 'oestr')]
 
 
-def test_summarise_explains_a_prefix_correction_that_drops_its_hyphen():
-    # feto- to foeto and leuk- to leuc drop it, so the replacement changes the
-    # shape of the line. A narrower signature rejected these, and because the
-    # check collapses the whole file's report, one such pair would have taken
-    # every other explained correction in the file down with it.
-    s = h.summarise_changes(_b("a feto-scan today"), _b("a foetoscan today"))
+def test_summarise_explains_a_prefix_correction_across_a_hyphen():
+    # The dictionary keys its prefix entries with a trailing hyphen (`feto-`),
+    # but the diff of `feto-scan` becoming `foeto-scan` yields the pair `feto`
+    # to `foeto`, which is not a key. The lookup tries the hyphen too, so the
+    # correction is recognised. Both sides are built here rather than read from
+    # the dictionary, so a dictionary change cannot quietly rewrite the test.
+    s = h.summarise_changes(_b("a feto-scan today"), _b("a foeto-scan today"))
     assert s['detailed'] is True
-    assert s['items'] == [(1, 'feto-scan', 'foetoscan')]
+    assert s['items'] == [(1, 'feto', 'foeto')]
+
+
+def test_a_word_britfix_does_not_know_cannot_carry_a_file_alone():
+    # Correctly shaped but unknown to the dictionary, so there is nothing to
+    # distinguish it from another writer swapping one word for another inside
+    # the window between the two reads. Alone, it is not enough to believe.
+    s = h.summarise_changes(_b("the wibble here"), _b("the wobble here"))
+    assert s['changed'] is True
+    assert s['detailed'] is False
+
+
+def test_one_recognised_correction_carries_the_whole_file():
+    # A britfix run always contains at least one word the dictionary knows. One
+    # is enough: asking it of every pair would discard the entire report the
+    # moment a real correction outran the dictionary's shape, which is the
+    # failure this lane exists to remove.
+    s = h.summarise_changes(_b("the color and the wibble"),
+                            _b("the colour and the wobble"))
+    assert s['detailed'] is True
+    assert s['total'] == 2
+
+
+def test_a_foreign_word_swap_is_not_reported_as_a_correction():
+    # The case the dictionary check exists for: a word-for-word edit by someone
+    # else during the run is correctly shaped and would otherwise have been
+    # reported as a correction, with the do-not-revert instruction attached.
+    s = h.summarise_changes(_b("call handleFoo now"), _b("call handleBar now"))
+    assert s['changed'] is True
+    assert s['detailed'] is False
+
+
+def test_an_unreadable_dictionary_does_not_suppress_every_report(monkeypatch):
+    # The check is a strengthener, not a dependency. If the dictionary cannot
+    # be read, the hook loses a little confidence and keeps the feature.
+    monkeypatch.setattr(h, "KNOWN_MAPPINGS", set())
+    s = h.summarise_changes(_b("the wibble here"), _b("the wobble here"))
+    assert s['detailed'] is True
 
 
 def test_is_correction_shaped_rejects_anything_that_is_not_a_word():

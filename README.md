@@ -311,6 +311,16 @@ perfectly explainable corrections down with it. A line that was added to or
 deleted from is treated the same way, since britfix substitutes words in place
 and never inserts or removes one.
 
+Shape alone cannot tell a correction from another writer swapping one word for
+another, so the hook also asks whether at least one changed word is one the
+dictionary knows how to rewrite. A britfix run always contains one; an edit by
+something else contains none. One recognised word is enough to believe the
+file, which keeps a correction the dictionary cannot express from discarding
+the report around it. What this does not catch: someone editing a word britfix
+knows, by hand, inside that same window. The report would then be wrong about
+who made the change and right about what it was, and separating the two would
+take the corrector's own account of what it decided.
+
 The report describes effects rather than decisions, so it cannot say whether a
 correction landed in prose, a comment or a machine-readable token; only the line
 number tells you where to look. Establishing that would take the corrector's own

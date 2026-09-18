@@ -257,6 +257,36 @@ _LINE_SPLIT_RE = re.compile(r'\r\n|\r|\n')
 # paragraph and short of a minified asset.
 DIFF_WORK_BUDGET = 150_000_000
 
+def load_known_mappings() -> set:
+    """Lower-cased keys of the spelling dictionary, or an empty set.
+
+    An empty set means 'no opinion', and the caller then skips the check
+    entirely rather than refusing every report: a dictionary this hook cannot
+    read must cost a little confidence, never the whole feature."""
+    try:
+        with open(HOOK_DIR / 'spelling-mapper.json') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {str(key).lower() for key in data}
+    except (OSError, ValueError):
+        pass
+    return set()
+
+
+KNOWN_MAPPINGS = load_known_mappings()
+
+
+def is_known_mapping(token: str) -> bool:
+    """True if the corrector knows how to rewrite this word.
+
+    The trailing hyphen is tried as well, because the dictionary's prefix
+    entries are keyed with one. `feto-` is a key; the diff of `feto-scan`
+    becoming `foeto-scan` yields the pair `feto` to `foeto`, and `feto` is
+    not."""
+    lowered = token.lower()
+    return lowered in KNOWN_MAPPINGS or (lowered + '-') in KNOWN_MAPPINGS
+
+
 def is_correction_shaped(token: str) -> bool:
     """True if a token could be one side of a spelling correction: letters,
     possibly with hyphens, and at least one letter.
@@ -389,7 +419,23 @@ def summarise_changes(before, after) -> dict:
         # before-read and the after-read straddle the corrector, so that window
         # exists. Say less rather than attributing a foreign edit to britfix and
         # naming words it never touched.
-        return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+        return unexplained
+
+    if KNOWN_MAPPINGS and not any(is_known_mapping(old) for _, old, _ in items):
+        # Shape alone cannot tell a correction from another writer swapping one
+        # word for another inside that same window. A britfix run always
+        # contains at least one word the dictionary knows and a foreign edit
+        # contains none, so one recognised pair is enough to believe the file,
+        # and no recognised pair at all is enough to doubt it. Asking this of
+        # every pair would be stricter and worse: it would discard the whole
+        # report whenever a real correction outran the dictionary's shape, and
+        # a lost report is the fault this lane exists to remove.
+        #
+        # What it does not close: someone editing a dictionary word by hand
+        # inside the window still reads as a correction. That message is wrong
+        # about who and right about what, and separating them needs the
+        # corrector's own account of what it decided.
+        return unexplained
 
     return {'changed': True, 'detailed': True, 'total': len(items), 'items': items}
 
