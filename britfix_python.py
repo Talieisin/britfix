@@ -171,7 +171,7 @@ def _parameter_labels(prose):
         match = _GOOGLE_LABEL.match(text)
         if match:
             labels.append(((base + match.start(), base + match.end()),
-                           match.group(1)))
+                           match.group(1) if sectioned else ''))
         elif sectioned:
             match = _GOOGLE_TYPED_LABEL.match(text)
             if match:

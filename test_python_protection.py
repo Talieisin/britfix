@@ -616,6 +616,14 @@ def test_only_documented_names_are_harvested(words, mode):
 
 
 
+@pytest.mark.parametrize('mode', MODES)
+def test_label_shaped_prose_does_not_harvest_a_name(words, mode):
+    # The line is protected where it stands, as it always has been, but it
+    # documents nothing, so it must not protect the word across the file.
+    source = docstring('    color: this line is in no section.') + '# The color was analyzed.\n'
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(
+        'The color was analyzed', 'The colour was analysed')
+
 
 @pytest.mark.parametrize('mode', MODES)
 @pytest.mark.parametrize('line,corrected', [
@@ -656,3 +664,11 @@ def test_a_heading_without_an_underline_neither_opens_nor_closes(words, mode):
     expected = source.replace('behavior', 'behaviour').replace('analyzed', 'analysed')
     assert PythonStrategy(mode).process(source, words)[0] == expected
 
+
+def test_only_the_first_docstring_line_is_scanned_when_lines_end_with_cr(words):
+    # A bare carriage return does not start a line, so the second label is not
+    # one. Only "defined" is checked: under "all" the tokeniser lexes CR-joined
+    # text as NAME tokens and protects it for a different reason.
+    source = 'def f(**kwargs):\r    """color: Enable it.\rcenter: Enable it.\r    """\r'
+    assert PythonStrategy('defined').process(source, words)[0] == source.replace(
+        'center:', 'centre:')
