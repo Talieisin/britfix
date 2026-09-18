@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Set
 from collections import defaultdict
 
+from britfix_spans import merge_spans
+
 
 class ConfigError(Exception):
     """Raised when config.json is missing or invalid."""
@@ -639,6 +641,80 @@ class HTMLStrategy(FileProcessingStrategy):
         return result, dict(total_changes)
 
 
+# Technical references inside comments, shared by CssStrategy and CodeStrategy.
+# Both strategies walk a comment the same way, preserving quoted runs and
+# correcting the prose between them; these helpers keep a dotted name such as
+# ``xref.finalize`` and a backtick span out of that prose. PythonStrategy
+# already protects both shapes in .py sources (see britfix_python.py), so this
+# keeps every other source extension consistent with it. See issue #63.
+_DOTTED_NAME = re.compile(r'\b\w+(?:\.\w+)+\b')
+_BACKTICK_RUN = re.compile(r'`+')
+
+
+def _backtick_span_end(text: str, start: int) -> int:
+    """End offset of the backtick code span opening at ``start``.
+
+    A span opened with N backticks closes on the next run of exactly N, so a
+    double-backtick span survives whole even when it encloses single backticks
+    (test_code_protection.py carries the literal forms). With no matching
+    closing run the remainder is treated as part of the span, which is what an
+    unclosed single backtick already did: a bounded missed correction inside
+    one comment, never a rewrite.
+    """
+    opener = _BACKTICK_RUN.match(text, start)
+    width = opener.end() - start
+    for run in _BACKTICK_RUN.finditer(text, opener.end()):
+        if run.end() - run.start() == width:
+            return run.end()
+    return len(text)
+
+
+def _protected_spans(segment: str, corrector: SpellingCorrector) -> List[Tuple[int, int]]:
+    """Merged spans of the segment that must reach the output verbatim.
+
+    Dotted names, plus any configured quoted phrase. Phrase masking normally
+    happens inside ``correct_text``, which can only see one call's worth of
+    text, so a phrase that straddles a dotted name (``node.js behavior``)
+    would be missed once the segment is split. Carrying the phrase spans here
+    keeps that promise: a quoted phrase is the one way a user can demand exact
+    bytes, so it must outrank the split.
+    """
+    spans = [match.span() for match in _DOTTED_NAME.finditer(segment)]
+    spans += corrector._phrase_spans(segment)
+    return merge_spans(spans)
+
+
+def _correct_prose(segment: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
+    """Correct an unquoted comment segment, leaving protected spans alone.
+
+    ``xref.finalize`` in a comment names a real function, so rewriting it to
+    ``xref.finalise`` leaves the comment pointing at something that does not
+    exist. Only the text between protected spans is corrected. Splitting at a
+    dotted name is safe because the pattern is word-bounded, so no dictionary
+    word can span a split. A decimal such as ``1.5`` matches the same shape
+    and is preserved too, which is harmless: digits carry no spelling.
+    """
+    total_changes = defaultdict(int)
+    parts = []
+    position = 0
+
+    def correct(text: str) -> None:
+        if not text:
+            return
+        corrected, changes = corrector.correct_text(text)
+        parts.append(corrected)
+        for word, count in changes.items():
+            total_changes[word] += count
+
+    for start, end in _protected_spans(segment, corrector):
+        correct(segment[position:start])
+        parts.append(segment[start:end])
+        position = end
+    correct(segment[position:])
+
+    return ''.join(parts), dict(total_changes)
+
+
 class CssStrategy(FileProcessingStrategy):
     """
     Process CSS files - only convert text in comments.
@@ -786,14 +862,10 @@ class CssStrategy(FileProcessingStrategy):
                 i = j
                 continue
 
-            # Check for backtick code spans - preserve them
+            # Check for backtick code spans - preserve them, including
+            # multi-backtick spans such as ``behavior``.
             if comment[i] == '`':
-                j = i + 1
-                while j < len(comment) and comment[j] != '`':
-                    j += 1
-                if j < len(comment):
-                    j += 1
-
+                j = _backtick_span_end(comment, i)
                 result.append(comment[i:j])
                 i = j
                 continue
@@ -808,7 +880,7 @@ class CssStrategy(FileProcessingStrategy):
             # Process unquoted segment
             segment = comment[i:next_quote]
             if segment:
-                corrected, changes = corrector.correct_text(segment)
+                corrected, changes = _correct_prose(segment, corrector)
                 result.append(corrected)
                 for word, count in changes.items():
                     total_changes[word] += count
@@ -1074,14 +1146,10 @@ class CodeStrategy(FileProcessingStrategy):
                 i = j
                 continue
 
-            # Check for backtick code spans - preserve them
+            # Check for backtick code spans - preserve them, including
+            # multi-backtick spans such as ``behavior``.
             if text[i] == '`':
-                j = i + 1
-                while j < len(text) and text[j] != '`':
-                    j += 1
-                if j < len(text):
-                    j += 1
-
+                j = _backtick_span_end(text, i)
                 result.append(text[i:j])  # Keep code spans unchanged
                 i = j
                 continue
@@ -1096,7 +1164,7 @@ class CodeStrategy(FileProcessingStrategy):
             # Process unquoted segment
             segment = text[i:next_quote]
             if segment:
-                corrected, changes = corrector.correct_text(segment)
+                corrected, changes = _correct_prose(segment, corrector)
                 result.append(corrected)
                 for word, count in changes.items():
                     total_changes[word] += count

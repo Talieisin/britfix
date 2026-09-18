@@ -95,7 +95,36 @@ For code files, the tool intelligently handles context:
 config.get('organization')      # String literal - unchanged
 payload = {'colorScheme': x}    # Dict key - unchanged  
 # Use 'colorField' for the API  # Quoted in comment - unchanged
+# See xref.finalize for details  # Dotted name in comment - unchanged
+# Use `colorField` here          # Backtick span in comment - unchanged
 ```
+
+Inside a comment or docstring, a dotted name such as `xref.finalize` and a
+backtick code span are left alone, so a comment cannot end up naming an API
+that does not exist (issue #63). This applies to every code extension and to
+stylesheet comments (`.css`, `.scss`, `.sass`, `.less`).
+
+A dotted name is protected exactly as it is in a `.py` file, and so is an
+ordinary backtick span. A span opened with two backticks closes on the next
+pair, so a double-backtick span survives whole. Two backtick cases are stricter
+here than in `.py`: a double-backtick span that encloses single backticks is
+preserved whole (in `.py` its inner text is still corrected), and an unclosed
+run preserves the rest of that one comment (in `.py` correction carries on).
+
+A decimal number such as `1.5` has the same shape as a dotted name and is
+preserved too, which costs nothing. Two things are deliberately not protected: a
+URL, so the path of a URL written in a comment can still be corrected, and a full
+stop with no space after it, so `color.Then` reads as a dotted name and neither
+word is corrected.
+
+A quoted phrase from `.britfixignore` wins over both the dotted-name split and
+the backtick pairing, including a phrase that contains a dot. Two limits apply to
+phrases inside comments, both of which predate this protection. A phrase
+containing an apostrophe, a straight double quote or a backtick is split by the
+comment scanner before it can be matched, so its words can still be converted:
+with `"don't change color"` configured, `// don't change color here` still
+becomes `// don't change colour here`. And where two configured phrases overlap,
+only the longer one is honoured.
 
 ## Ignoring Words (`.britfixignore`)
 
@@ -354,7 +383,18 @@ model.
 
 ### Python and file preservation
 
-Python files use tokenisation and AST docstring identification while retaining the `code:` ignore namespace. Non-docstring string literals, executable tokens, shebangs and technical references (backticks, dotted names such as `xref.finalize`, URLs, quotations and docstring parameter labels) remain unchanged. Other source languages retain their existing strategy.
+Python files use tokenisation and AST docstring identification while retaining the `code:` ignore namespace. Non-docstring string literals, executable tokens, shebangs and technical references (backticks, dotted names such as `xref.finalize`, URLs and quotations) remain unchanged. Tokenisation and AST analysis, the file-local identifier set, docstring parameter labels and failing closed on unparseable source are specific to Python; see [Code File Handling](#code-file-handling) for the protections that apply to source files generally.
+
+Docstring parameter labels are preserved, and only the label: the description beside it is still corrected, so documented prose does not stop being processed. The one qualification is the documented name itself, which is protected wherever it appears in the file, including in descriptions, as set out below. The forms recognised are:
+
+- Google style at the start of a line. The untyped forms `color:` and `color : bool` are recognised anywhere in a docstring. The typed forms `color (bool):`, `color (bool, optional):`, `*args (tuple):` and `**kwargs (dict):` are recognised only inside a section block, meaning the indented body under an `Args:`, `Arguments:`, `Keyword Args:`, `Keyword Arguments:`, `Attributes:`, `Parameters:`, `Other Parameters:`, `Returns:`, `Yields:`, `Raises:`, `Receives:` or `Warns:` heading, because `Deprecated (since the 2.0 release):` is a sentence rather than a label. The name and the parenthesised type are preserved; the description after the colon is not. A line whose first word is followed by a space rather than a colon is ordinary prose, so `See also: the color table` is still corrected.
+- Sphinx info fields that carry a name: `:param`, `:parameter`, `:arg`, `:argument`, `:key`, `:keyword`, `:kwarg`, `:var`, `:ivar`, `:cvar`, `:raises`, `:raise`, `:except` and `:exception`. The field name and the name it carries are preserved, so `:raises ValueError: bad color` keeps the class name and still corrects the description. `:returns:` and any unrecognised field are ordinary prose.
+- `:type`, `:vartype` and `:rtype` preserve the whole line, because their payload is a type expression rather than a description.
+- NumPy name lines inside a section whose heading carries a dashed underline (`Parameters`, `Other Parameters`, `Attributes`, `Returns`, `Yields`, `Raises`, `Receives`, `Warns`). A line at the heading's own indent that is wholly names, optionally starred and optionally followed by ` : type`, is preserved, but only when a more deeply indented description follows it, which is what the format requires; a run of prose at the section's own indent is therefore not mistaken for names. The description itself is still corrected. A section ends at the next underlined heading, whatever it is called, so an underlined `Notes` closes the section before it and its own body is ordinary prose. A heading with no underline neither opens a section nor closes one.
+
+A name recognised as a parameter label is protected file-wide: it is left alone everywhere else in that file's comments and docstrings, not only in the docstring that documents it, so a description such as `Alias for color` keeps the name it refers to. Only labels that a section documents count here, that is a Google label inside a section block, a Sphinx info field, or a NumPy name line; a sentence that merely begins with a word and a colon is still protected where it stands but records no name. Matching is case-sensitive, as it is for identifiers, so documenting `Color:` does not protect `color`.
+
+Labels are matched per line in the docstring as it is written, not in its decoded value, so an escape such as `\n` inside a docstring does not begin a label line. A bare carriage return does not start a line either, so in a file whose only line ending is `\r` only the first line of each docstring is scanned for labels.
 
 Words that name a Python identifier are also left alone in comments and docstrings. Matching is file-local and case-sensitive, and is controlled by `strategies.code.python_identifier_protection` in `config.json`:
 
@@ -363,7 +403,7 @@ Words that name a Python identifier are also left alone in comments and docstrin
 
 In both modes, a non-docstring string literal whose whole value is an identifier (such as `"color"`) also protects its prose mentions. Any other value for the setting is a fatal config error.
 
-Either Python parsing or tokenisation failure skips the whole file, so it receives no corrections at all; newer syntax unsupported by the running Python version is also skipped. If the positions reported by the tokeniser or parser ever disagree with the file text, the file is skipped rather than written. Files whose only line ending is a bare carriage return (`\r`) tokenise as a single line, so only a comment that opens the file is corrected; later comments are left unchanged (docstrings are still corrected under the default setting). Unsupported encodings are skipped rather than transcoded. The CLI emits `britfix: skipped` diagnostics and separate skipped counts; the hook relays those diagnostics to stderr. These are diagnostic records, not a model-interrupting hook response.
+Either Python parsing or tokenisation failure skips the whole file, so it receives no corrections at all; newer syntax unsupported by the running Python version is also skipped. If the positions reported by the tokeniser or parser ever disagree with the file text, the file is skipped rather than written. Files whose only line ending is a bare carriage return (`\r`) tokenise as a single line, so only a comment that opens the file is corrected; later comments are left unchanged (docstrings are still corrected under the default setting). Unsupported encodings are skipped rather than transcoded. The CLI emits `britfix: skipped` diagnostics and separate skipped counts; the hook relays those diagnostics rather than dropping them. These are diagnostic records, not a model-interrupting hook response.
 
 UTF-8 BOMs and line endings survive automatic and interactive file I/O. Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.
 
