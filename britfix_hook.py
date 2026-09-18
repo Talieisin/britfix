@@ -230,6 +230,22 @@ MAX_MESSAGE_CHARS = 1500
 # word-for-word rather than smearing across the punctuation around it.
 _TOKEN_RE = re.compile(r"[^\W\d_]+|\W+|\d+|_+", re.UNICODE)
 
+def is_correction_shaped(token: str) -> bool:
+    """True if a token could be one side of a spelling correction: letters,
+    possibly with hyphens, and at least one letter.
+
+    Hyphens are allowed because the dictionary's prefix entries rewrite across
+    one. `feto-` maps to `foeto` with no trailing hyphen, so `feto-scan` becomes
+    `foetoscan`: a real correction whose two sides are not plain words. Four
+    entries need that today (estr-, feto-, leuk-, paleo-), but the reason to
+    allow it is that the dictionary can grow another awkward one, and that the
+    cost of rejecting a legitimate pair is high: the check below collapses the
+    whole file's report, so one unrecognised pair would take down a report of
+    nine perfectly explainable corrections alongside it."""
+    return (bool(token)
+            and all(char == '-' or char.isalpha() for char in token)
+            and any(char.isalpha() for char in token))
+
 
 def read_file_bytes(path: str):
     """Read a file as bytes, or None if it cannot be read.
@@ -296,13 +312,14 @@ def summarise_changes(before, after) -> dict:
         # difference. Real, but not a spelling report.
         return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
 
-    if any(not (old.isalpha() and new.isalpha()) for _, old, new in items):
-        # A spelling correction always replaces one alphabetic word with
-        # another. Anything else means the file changed in a way britfix cannot
-        # account for, most likely because something else wrote to it during the
-        # run. The before-read and the after-read straddle the corrector, so that
-        # window exists. Say less rather than attributing a foreign edit to
-        # britfix and naming words it never touched.
+    if any(not (is_correction_shaped(old) and is_correction_shaped(new))
+           for _, old, new in items):
+        # A spelling correction replaces one word with another word. Anything
+        # else means the file changed in a way britfix cannot account for, most
+        # likely because something else wrote to it during the run: the
+        # before-read and the after-read straddle the corrector, so that window
+        # exists. Say less rather than attributing a foreign edit to britfix and
+        # naming words it never touched.
         return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
 
     return {'changed': True, 'detailed': True, 'total': len(items), 'items': items}

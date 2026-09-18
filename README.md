@@ -297,9 +297,13 @@ in the totals, so reading it reported double the real number.
 
 Because those two reads straddle the corrector, another writer can change the
 file inside that window. When the difference is not a word-for-word substitution
-between two alphabetic words, the hook does not attribute it to britfix: it
-reports that the file differs from what was written, without a count and without
-claiming the change was a correction. It reports effects rather than decisions,
+between two words, the hook does not attribute it to britfix: it reports that
+the file differs from what was written, without a count and without claiming the
+change was a correction. A word here means letters and hyphens, wide enough to
+cover a prefix correction that rewrites across a hyphen (`feto-scan` becomes
+`foetoscan`), because that check discards the whole file's report rather than
+one entry: too narrow a test would let a single unrecognised pair take nine
+perfectly explainable corrections down with it. It reports effects rather than decisions,
 so it cannot say whether a correction landed in prose, a comment or a
 machine-readable token; only the line number tells you where to look.
 

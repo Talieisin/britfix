@@ -489,3 +489,33 @@ def test_output_does_not_claim_britfix_made_an_unexplained_change():
     ctx = out['hookSpecificOutput']['additionalContext']
     assert 'must not be reverted' not in ctx
     assert 'Re-read the file' in ctx
+
+
+def test_summarise_explains_a_prefix_correction_that_keeps_its_hyphen():
+    # estr- to oestr- and paleo- to palaeo- keep the trailing hyphen.
+    s = h.summarise_changes(_b("an estr-levels study"), _b("an oestr-levels study"))
+    assert s['detailed'] is True
+    assert s['items'] == [(1, 'estr', 'oestr')]
+
+
+def test_summarise_explains_a_prefix_correction_that_drops_its_hyphen():
+    # feto- to foeto and leuk- to leuc drop it, so the replacement changes the
+    # shape of the line. A narrower signature rejected these, and because the
+    # check collapses the whole file's report, one such pair would have taken
+    # every other explained correction in the file down with it.
+    s = h.summarise_changes(_b("a feto-scan today"), _b("a foetoscan today"))
+    assert s['detailed'] is True
+    assert s['items'] == [(1, 'feto-scan', 'foetoscan')]
+
+
+def test_is_correction_shaped_rejects_anything_that_is_not_a_word():
+    # The guard's whole value is what it refuses. A machine token, a span with
+    # punctuation or spaces in it, a number, or a bare hyphen are not spelling
+    # corrections and must not be reported as though britfix made them.
+    assert h.is_correction_shaped('color')
+    assert h.is_correction_shaped('feto-scan')
+    assert not h.is_correction_shaped('w:color')
+    assert not h.is_correction_shaped('color is nice  # added')
+    assert not h.is_correction_shaped('1')
+    assert not h.is_correction_shaped('-')
+    assert not h.is_correction_shaped('')
