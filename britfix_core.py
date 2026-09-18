@@ -1242,15 +1242,19 @@ def is_supported_extension(file_extension: str) -> bool:
     """True if config.json configures a strategy for this extension.
 
     Anything else falls through get_file_strategy to PlainTextStrategy, which
-    rewrites the whole file with no structural awareness. That is the right
-    default for stdin, where the caller names '.txt' deliberately and there is
-    no filename to reason from, and the wrong one for a file on disk, where the
-    extension is the only signal about structure: a .pyi, .lua, .yaml or .tf
-    file handled as plain text has its identifiers and keys rewritten.
+    rewrites the whole file with no structural awareness: a .pyi, .lua, .yaml or
+    .tf file handled as plain text has its identifiers and keys rewritten, not
+    just its prose. So a caller processing a file from disk must ask this first
+    rather than relying on that fallback.
 
-    So callers processing real files must ask this first rather than relying on
-    the fallback. The hook has always gated on the same set, built from the same
-    config; this is what lets the CLI agree with it.
+    Note that the fallback now has no caller at all. Stdin does not reach it:
+    britfix.py names '.txt', which is a real key in FILE_STRATEGIES and resolves
+    through the map, and interactive stdin builds PlainTextStrategy directly.
+    It is kept only as a defensive default for callers outside this repository,
+    and nothing here may start depending on it again.
+
+    The hook has always gated on the same set, built from the same config; this
+    is what lets the CLI agree with it.
     """
     return file_extension.lower() in FILE_STRATEGIES
 

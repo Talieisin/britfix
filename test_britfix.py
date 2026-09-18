@@ -1446,6 +1446,20 @@ class TestSupportedExtensions:
         assert is_supported_extension('.MD')
         assert is_supported_extension('.Py')
 
+    def test_help_text_covers_every_configured_extension(self):
+        """--help is now the tool's own statement of what the gate allows.
+
+        The hand-written list it replaced named 22 of the 35 configured
+        extensions. That was merely untidy while unlisted types were processed
+        anyway; once they are skipped, an under-reporting help text tells the
+        user a supported file type will be refused.
+        """
+        text = britfix.supported_types_help()
+        listed = {ext.strip()
+                  for line in text.splitlines()[1:]
+                  for ext in line.split(':', 1)[1].split(',')}
+        assert listed == set(SUPPORTED_EXTENSIONS)
+
     def test_gate_agrees_with_the_hook(self):
         """The two entry points must allow exactly the same set.
 

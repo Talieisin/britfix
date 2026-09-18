@@ -54,6 +54,7 @@ from britfix_core import (
     get_file_strategy,
     get_file_strategy_name,
     is_supported_extension,
+    FILE_STRATEGIES,
     discover_ignore_words,
     get_corrector_for_strategy,
     get_user_ignore_path,
@@ -276,6 +277,26 @@ def process_stdin_interactive(content: str, corrector: SpellingCorrector) -> tup
     return navigate_changes_interactive(content, word_groups, "stdin")
 
 
+def supported_types_help() -> str:
+    """Render the supported extensions for --help, from the configured strategies.
+
+    Built from the same FILE_STRATEGIES map the CLI's gate consults, so the help
+    text cannot drift from what the tool will actually process. The hand-written
+    list this replaces had already drifted: it named 22 of the 35 configured
+    extensions, omitting every CSS one and most of the code and Markdown ones.
+    That was cosmetic while unlisted types were silently processed anyway, and
+    became misleading once they started being skipped.
+    """
+    by_strategy = defaultdict(list)
+    for ext, (strategy_name, _) in FILE_STRATEGIES.items():
+        by_strategy[strategy_name].append(ext)
+    lines = ['Supported file types (any other extension is skipped):']
+    for strategy_name in sorted(by_strategy):
+        extensions = ', '.join(sorted(by_strategy[strategy_name]))
+        lines.append(f'  - {strategy_name}: {extensions}')
+    return '\n'.join(lines)
+
+
 def main():
     # Set up logging
     logging.basicConfig(
@@ -287,13 +308,8 @@ def main():
     parser = argparse.ArgumentParser(
         description='Correct American spellings in files with support for multiple file types.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Supported file types:
-  - Text: .txt, .md
-  - LaTeX: .tex
-  - Web: .html, .htm, .xml
-  - Data: .json
-  - Code: .py, .js, .java, .cpp, .c, .h, .cs, .rb, .go, .rs, .swift, .kt
+        epilog=f"""
+{supported_types_help()}
 
 Examples:
   %(prog)s --input file.md
