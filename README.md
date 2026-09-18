@@ -76,6 +76,8 @@ process a new file type, add its extension to the appropriate strategy in
 
 JSON values are corrected only when they contain whitespace. Single-token strings — `"center"`, `"colorScheme"`, `"src/Color.tsx"` — are treated as identifiers and left alone, since most JSON values in config files are programmatic, not prose. Multi-word values like `"The organization was reorganized"` are still corrected normally.
 
+Correcting a JSON file reserialises the whole document, so a minified or four-space file is reindented to two spaces wholesale even when only one string changed. The file's trailing newline is preserved, but nothing else about its layout is. This is tracked as [#88](https://github.com/Talieisin/britfix/issues/88).
+
 To opt out of JSON correction entirely, add `json:*` to your `.britfixignore` (see the [strategy escape hatch](#format) below).
 
 ### Markdown File Handling

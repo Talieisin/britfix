@@ -921,7 +921,11 @@ class JSONStrategy(FileProcessingStrategy):
             # already rewritten every interior separator to LF, so restoring
             # the original terminator would leave the last line ending CRLF
             # and every other line ending LF.
-            newline = '\n' if content.endswith(('\n', '\r')) else ''
+            # rstrip first: a file ending in a newline plus stray spaces or
+            # tabs did have a trailing newline, and must not lose it. The
+            # stray whitespace itself is dropped, like every other layout
+            # byte json.dumps discards.
+            newline = '\n' if content.rstrip(' \t').endswith(('\n', '\r')) else ''
             return json.dumps(data, indent=2, ensure_ascii=False) + newline, dict(total_changes)
         except json.JSONDecodeError as e:
             print(

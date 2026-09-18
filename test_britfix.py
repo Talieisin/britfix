@@ -2561,6 +2561,9 @@ class TestJSONStrategyTrailingNewline:
         ('\n', '', ''),          # a file with no final newline must not gain one
         ('\r\n', '\r\n', '\n'),  # CRLF collapses to LF, see the comment on the fix
         ('\r', '\r', '\n'),      # a lone CR is still a line ending
+        ('\n', '\n   ', '\n'),   # a newline plus stray spaces still counts as one
+        ('\n', '\n\t', '\n'),    # and so does a newline plus a stray tab
+        ('\n', '   ', ''),       # trailing spaces with no newline are not a newline
     ])
     def test_object_keeps_its_terminator(self, strategy, corrector, sep, terminator, expected):
         source = sep.join(['{', '  "note": "The color was analyzed"', '}']) + terminator
@@ -2589,7 +2592,15 @@ class TestJSONStrategyTrailingNewline:
         assert result == expected
 
     def test_repeated_processing_does_not_accumulate_newlines(self, strategy, corrector):
-        """Feeding the output back in must be a fixed point, not grow a newline."""
+        """Feeding the output back in must be a fixed point, not grow a newline.
+
+        Read this as a documentation pin, not a regression guard. It passes
+        against the unfixed code and against every mutant of the fix tried so
+        far, because the reserialised body never ends in a newline for the
+        terminator to double up on. What it would catch is a variant that
+        preserved the whole trailing whitespace run and then appended a newline
+        on top of it, which is the shape the rstrip above makes tempting.
+        """
         source = '{\n  "note": "The color was analyzed"\n}\n'
         first, _ = strategy.process(source, corrector)
         second, changes = strategy.process(first, corrector)
