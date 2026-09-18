@@ -415,7 +415,7 @@ In both modes, a non-docstring string literal whose whole value is an identifier
 
 Either Python parsing or tokenisation failure skips the whole file, so it receives no corrections at all; newer syntax unsupported by the running Python version is also skipped. If the positions reported by the tokeniser or parser ever disagree with the file text, the file is skipped rather than written. Files whose only line ending is a bare carriage return (`\r`) tokenise as a single line, so only a comment that opens the file is corrected; later comments are left unchanged (docstrings are still corrected under the default setting). Unsupported encodings are skipped rather than transcoded. The CLI emits `britfix: skipped` diagnostics and separate skipped counts; the hook relays those diagnostics rather than dropping them. These are diagnostic records, not a model-interrupting hook response.
 
-UTF-8 BOMs and line endings survive automatic and interactive file I/O. Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.
+UTF-8 BOMs and line endings survive automatic and interactive file I/O, with JSON the exception: reserialisation rewrites every interior line ending to LF, and only the presence of a trailing newline is preserved (see [#88](https://github.com/Talieisin/britfix/issues/88)). Markdown, Python and LaTeX protection is verified by byte-preservation tests. JSON retains its existing reserialisation behaviour.
 
 ### Bounded LaTeX prose handling
 
