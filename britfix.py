@@ -282,10 +282,16 @@ def supported_types_help() -> str:
 
     Built from the same FILE_STRATEGIES map the CLI's gate consults, so the help
     text cannot drift from what the tool will actually process. The hand-written
-    list this replaces had already drifted: it named 22 of the 35 configured
-    extensions, omitting every CSS one and most of the code and Markdown ones.
-    That was cosmetic while unlisted types were silently processed anyway, and
-    became misleading once they started being skipped.
+    list this replaces had already drifted: it named 19 of the 35 configured
+    extensions, omitting all four CSS ones, four of the five Markdown ones and
+    eight of the twenty code ones. That was cosmetic while unlisted types were
+    silently processed anyway, and became misleading once they started being
+    skipped.
+
+    Percent signs are doubled because argparse runs the epilog through
+    %-formatting whenever it contains %(prog)s, which the examples below it do.
+    No configured extension contains one today; this keeps a future one from
+    turning --help into a ValueError.
     """
     by_strategy = defaultdict(list)
     for ext, (strategy_name, _) in FILE_STRATEGIES.items():
@@ -294,7 +300,7 @@ def supported_types_help() -> str:
     for strategy_name in sorted(by_strategy):
         extensions = ', '.join(sorted(by_strategy[strategy_name]))
         lines.append(f'  - {strategy_name}: {extensions}')
-    return '\n'.join(lines)
+    return '\n'.join(lines).replace('%', '%%')
 
 
 def main():

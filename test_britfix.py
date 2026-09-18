@@ -1449,7 +1449,7 @@ class TestSupportedExtensions:
     def test_help_text_covers_every_configured_extension(self):
         """--help is now the tool's own statement of what the gate allows.
 
-        The hand-written list it replaced named 22 of the 35 configured
+        The hand-written list it replaced named 19 of the 35 configured
         extensions. That was merely untidy while unlisted types were processed
         anyway; once they are skipped, an under-reporting help text tells the
         user a supported file type will be refused.
@@ -1459,6 +1459,22 @@ class TestSupportedExtensions:
                   for line in text.splitlines()[1:]
                   for ext in line.split(':', 1)[1].split(',')}
         assert listed == set(SUPPORTED_EXTENSIONS)
+
+    def test_rendered_help_lists_every_configured_extension(self, monkeypatch, capsys):
+        """Pin the epilog itself, not just the function behind it.
+
+        Asserting on supported_types_help() alone would stay green if the
+        epilog were reverted to a hand-written list, which is the exact drift
+        this is meant to prevent. Go through argparse instead, which also
+        proves the %-formatting of the examples still resolves.
+        """
+        monkeypatch.setattr(sys, 'argv', ['britfix', '--help'])
+        with pytest.raises(SystemExit):
+            britfix.main()
+        rendered = capsys.readouterr().out
+        for ext in SUPPORTED_EXTENSIONS:
+            assert ext in rendered, f'{ext} missing from --help'
+        assert 'britfix.py --input file.md' in rendered or '--input file.md' in rendered
 
     def test_gate_agrees_with_the_hook(self):
         """The two entry points must allow exactly the same set.
