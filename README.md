@@ -95,7 +95,19 @@ For code files, the tool intelligently handles context:
 config.get('organization')      # String literal - unchanged
 payload = {'colorScheme': x}    # Dict key - unchanged  
 # Use 'colorField' for the API  # Quoted in comment - unchanged
+# See xref.finalize for details  # Dotted name in comment - unchanged
+# Use `colorField` here          # Backtick span in comment - unchanged
 ```
+
+Inside a comment or docstring, a dotted name such as `xref.finalize` and a
+backtick code span are left alone, so a comment cannot end up naming an API that
+does not exist (issue #63). A span opened with two backticks closes on the next
+pair, so `` ``behavior`` `` survives whole; an unclosed span preserves the rest
+of that one comment. This applies to every code extension and to stylesheet
+comments (`.css`, `.scss`, `.sass`, `.less`), matching the protection `.py`
+files already had. A decimal number such as `1.5` has the same shape and is
+preserved too, which costs nothing. URLs are not protected here, so the path of
+a URL written in a comment can still be corrected.
 
 ## Ignoring Words (`.britfixignore`)
 
