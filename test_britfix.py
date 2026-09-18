@@ -157,6 +157,65 @@ class TestRemovedMappings:
         assert corrector.correct_text("a videodisk")[0] == "a videodisc"
 
 
+class TestPrefixMappingsKeepTrailingHyphen:
+    """A prefix mapping must not swallow the author's hyphen.
+
+    Four dictionary entries are prefixes whose key ends in a hyphen, so they only
+    fire inside a hyphenated compound. Two of them once mapped to a value with no
+    trailing hyphen, so correcting a compound deleted the hyphen the author wrote
+    and welded the two words together: "feto-scan" became "foetoscan" and
+    "leuk-count" became "leuccount". That is corruption rather than correction.
+    Any key ending in a hyphen must map to a value ending in a hyphen. See issue
+    #77.
+    """
+
+    # key, value, compound as written, compound after correction
+    PREFIXES = [
+        ("estr-", "oestr-", "estr-levels", "oestr-levels"),
+        ("feto-", "foeto-", "feto-scan", "foeto-scan"),
+        ("leuk-", "leuc-", "leuk-count", "leuc-count"),
+        ("paleo-", "palaeo-", "paleo-diet", "palaeo-diet"),
+    ]
+
+    @pytest.mark.parametrize("key,value,_compound,_expected", PREFIXES)
+    def test_value_keeps_trailing_hyphen(self, corrector, key, value, _compound, _expected):
+        assert corrector.dictionary[key] == value, f"'{key}' must map to a value ending in a hyphen"
+
+    @pytest.mark.parametrize("key,_value,compound,expected", PREFIXES)
+    def test_hyphenated_compound_keeps_its_hyphen(self, corrector, key, _value, compound, expected):
+        result, _changes = corrector.correct_text(f"a {compound} here")
+        assert result == f"a {expected} here"
+        assert "-" in result, f"correcting '{compound}' destroyed the author's hyphen: {result}"
+
+    def test_no_prefix_key_maps_to_an_unhyphenated_value(self, corrector):
+        # An invariant over the whole dictionary, so it catches the next prefix
+        # mapping someone adds, not only the four that exist today.
+        offenders = {k: v for k, v in corrector.dictionary.items()
+                     if k.endswith("-") and not v.endswith("-")}
+        assert offenders == {}, f"these prefix mappings would delete a hyphen: {offenders}"
+
+    # The prefix rules are NOT redundant with the whole-word entries below, and
+    # must not be deleted as duplicates of them. Only a hyphenated compound whose
+    # second element is not itself a dictionary word reaches a prefix rule, which
+    # is why the two broken values went unnoticed for so long.
+    WHOLE_WORDS = [
+        ("leukemia", "leukaemia"),
+        ("estrogen", "oestrogen"),
+        ("paleolithic", "palaeolithic"),
+        ("fetus", "foetus"),
+        ("fetal", "foetal"),
+    ]
+
+    @pytest.mark.parametrize("word,expected", WHOLE_WORDS)
+    def test_whole_word_entries_still_convert_on_their_own(self, corrector, word, expected):
+        assert corrector.correct_text(f"the {word} here")[0] == f"the {expected} here"
+
+    def test_bare_prefix_outside_a_compound_is_left_alone(self, corrector):
+        result, changes = corrector.correct_text("a feto- study")
+        assert result == "a feto- study"
+        assert len(changes) == 0
+
+
 class TestCodeStrategy:
     """CodeStrategy should only convert in comments/docstrings, not string literals."""
     
