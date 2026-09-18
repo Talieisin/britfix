@@ -22,6 +22,47 @@ _NAMED_DEFINITIONS = (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef,
                       ast.ExceptHandler, ast.MatchAs, ast.MatchStar,
                       ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple)
 
+# Docstring parameter labels name code, so they are syntax rather than prose.
+# Only the label is protected: the description beside it stays prose and is
+# still corrected, or whole documented sections would stop being corrected.
+
+# Google style, with the optional parenthesised type the style guide uses:
+# "name:", "name : type", "name (bool):", "name (int, optional):", "**kw (dict):".
+# A word followed by a space rather than a colon cannot start a label, so an
+# ordinary sentence that happens to end in a colon stays prose.
+_GOOGLE_LABEL = re.compile(r'(?m)^[ \t]*\*{0,2}\w+(?:[ \t]*\([^()\r\n]*\))?[ \t]*:')
+
+# Sphinx info fields whose payload names a parameter, attribute or exception.
+# Longest first so ":parameter x:" is not read as ":param" followed by "eter x".
+_SPHINX_FIELDS = ('param', 'parameter', 'arg', 'argument', 'key', 'keyword',
+                  'kwarg', 'var', 'ivar', 'cvar',
+                  'raises', 'raise', 'except', 'exception')
+_SPHINX_FIELD = re.compile(
+    r'(?m)^[ \t]*:(?:' + '|'.join(sorted(_SPHINX_FIELDS, key=len, reverse=True))
+    + r')[ \t]+[^:\r\n]+:')
+
+# The three type fields are the one exception to protecting only the label: the
+# payload after their closing colon is a type expression by definition, never
+# prose, so ":type c: color" naming a class keeps that class name. Fields whose
+# payload is prose, ":returns:" and ":raises ValueError:" among them, are not
+# listed here and keep having their descriptions corrected.
+_SPHINX_TYPE_FIELD = re.compile(r'(?m)^[ \t]*:(?:vartype|rtype|type)(?=[ \t:])[^\r\n]*')
+
+# NumPy style, found from the dashed underline rather than guessed at from
+# indentation. The backreference holds the underline to the heading's own
+# indent. As for every label form here, a lone CR is not a line start to (?m),
+# so a file whose only line ending is one is not scanned for labels.
+_NUMPY_HEADING = re.compile(
+    r'(?m)^([ \t]*)([A-Za-z][A-Za-z ]*[A-Za-z])[ \t]*\r?\n\1-{3,}[ \t]*(?=\r?\n|\Z)')
+_NUMPY_SECTIONS = frozenset({'parameters', 'other parameters', 'attributes',
+                             'returns', 'yields', 'raises', 'receives', 'warns'})
+# A name line is wholly names, optionally starred, optionally " : type". Any
+# other text at that indent is prose and keeps its corrections.
+_NUMPY_NAME = re.compile(
+    r'([ \t]*)\*{0,2}[A-Za-z_]\w*(?:[ \t]*,[ \t]*\*{0,2}[A-Za-z_]\w*)*'
+    r'(?:[ \t]*:[^\r\n]*)?[ \t]*')
+_LINE = re.compile(r'(?m)^[^\r\n]*')
+
 
 class ProcessingSkipped(Exception):
     """Input was not safe to process; distinguish this from a clean scan."""
@@ -48,6 +89,42 @@ def _apply(content, replacements):
 
 def _inconsistent(detail):
     return ProcessingSkipped(f'Python offsets inconsistent: {detail}')
+
+
+def _numpy_label_spans(prose):
+    """Spans of the name lines of every recognised NumPy section."""
+    headings = list(_NUMPY_HEADING.finditer(prose))
+    sections = []
+    for index, heading in enumerate(headings):
+        if ' '.join(heading.group(2).split()).lower() not in _NUMPY_SECTIONS:
+            continue
+        # A section ends at the next underlined heading of any name, so an
+        # unlisted one such as Notes both closes this section and is skipped.
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(prose)
+        sections.append((heading.end(), end, heading.group(1)))
+    if not sections:
+        return []
+    spans = []
+    current = 0
+    # Lines are visited once in order, so many sections cost no rescan.
+    for line in _LINE.finditer(prose):
+        while current < len(sections) and sections[current][1] <= line.start():
+            current += 1
+        if current == len(sections) or line.start() <= sections[current][0]:
+            continue
+        match = _NUMPY_NAME.fullmatch(line.group())
+        if match and match.group(1) == sections[current][2]:
+            spans.append(line.span())
+    return spans
+
+
+def _parameter_label_spans(prose):
+    """Spans of Google, Sphinx and NumPy parameter labels, descriptions excluded."""
+    spans = [match.span() for match in _GOOGLE_LABEL.finditer(prose)]
+    spans += [match.span() for match in _SPHINX_FIELD.finditer(prose)]
+    spans += [match.span() for match in _SPHINX_TYPE_FIELD.finditer(prose)]
+    spans += _numpy_label_spans(prose)
+    return spans
 
 
 class PythonStrategy:
@@ -163,9 +240,7 @@ class PythonStrategy:
             if escapes:
                 # A named escape such as \N{...} is part of the string's value, not prose.
                 protected += [m.span() for m in re.finditer(r'\\N\{[^}]*\}', prose)]
-            # Parameter labels: Google/NumPy and Sphinx forms.
-            protected += [m.span() for m in re.finditer(
-                r'(?m)^[ \t]*(?:\*{0,2}\w+[ \t]*:|:param[ \t]+[^:\r\n]+:)', prose)]
+            protected += _parameter_label_spans(prose)
             protected = merge_spans(protected)
             for a, b, old, new in corrector.find_replacements(prose):
                 if old in names or any(x < b and a < y for x, y in protected):

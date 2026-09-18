@@ -450,3 +450,121 @@ def test_safety_net_skips_when_correction_breaks_parsing():
         PythonStrategy('defined').process(source, Breaking())
     with pytest.raises(ProcessingSkipped, match='would break parsing'):
         PythonStrategy('defined').find_safe_replacements(source, Breaking())
+
+
+def docstring(body, signature='def f(**kwargs):'):
+    return signature + '\n    """Doc.\n\n' + body + '\n    """\n'
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('label', [
+    'color:',
+    'color : bool',
+    'color (bool):',
+    'color (bool, optional):',
+    'color (int or None):',
+    '*color (tuple):',
+    '**color (dict):',
+])
+def test_google_labels_preserve_name_and_type(words, mode, label):
+    source = docstring('    Args:\n        ' + label + ' The behavior.')
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(
+        'The behavior', 'The behaviour')
+
+
+SPHINX_NAME_FIELDS = ['param', 'parameter', 'arg', 'argument', 'key', 'keyword',
+                      'kwarg', 'var', 'ivar', 'cvar', 'raises', 'raise',
+                      'except', 'exception']
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('field', SPHINX_NAME_FIELDS)
+def test_sphinx_info_fields_preserve_the_name_they_carry(words, mode, field):
+    source = docstring('    :' + field + ' color: The behavior.')
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(
+        'The behavior', 'The behaviour')
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('line', [
+    ':type center: color',
+    ':vartype center: color',
+    ':rtype: color',
+])
+def test_sphinx_type_fields_protect_their_payload(words, mode, line):
+    # These three carry a type expression rather than a description.
+    assert PythonStrategy(mode).process(docstring('    ' + line), words)[0] == docstring('    ' + line)
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('line,corrected', [
+    (':returns: the color of it', ':returns: the colour of it'),
+    (':raises ValueError: bad color', ':raises ValueError: bad colour'),
+    (':rtypes: the color', ':rtypes: the colour'),
+    (':paramount color: the color', ':paramount colour: the colour'),
+])
+def test_sphinx_descriptions_and_unknown_fields_are_still_corrected(words, mode, line, corrected):
+    source = docstring('    ' + line)
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(line, corrected)
+
+
+NUMPY_BODY = (
+    '    Parameters\n'
+    '    ----------\n'
+    '    color\n'
+    '        Whether the color is analyzed.\n'
+    '    center, behavior : str\n'
+    '        The behavior was organized.\n'
+    '    **color : dict\n'
+    '        Extra color options.\n'
+    '\n'
+    '    Returns\n'
+    '    -------\n'
+    '    center\n'
+    '        The organized color.\n'
+    '\n'
+    '    Notes\n'
+    '    -----\n'
+    '    The color was analyzed.'
+)
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_numpy_name_lines_preserved_and_descriptions_corrected(words, mode):
+    source = docstring(NUMPY_BODY)
+    expected = source
+    for before, after in [
+        ('Whether the color is analyzed.', 'Whether the colour is analysed.'),
+        ('The behavior was organized.', 'The behaviour was organised.'),
+        ('Extra color options.', 'Extra colour options.'),
+        ('The organized color.', 'The organised colour.'),
+        ('The color was analyzed.', 'The colour was analysed.'),
+    ]:
+        expected = expected.replace(before, after)
+    assert PythonStrategy(mode).process(source, words)[0] == expected
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_numpy_names_need_a_dashed_underline(words, mode):
+    source = docstring('    Parameters\n\n    color\n        The color.')
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace('color', 'colour')
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_numpy_labels_survive_crlf(words, mode):
+    source = docstring(NUMPY_BODY).replace('\n', '\r\n')
+    result = PythonStrategy(mode).process(source, words)[0]
+    assert '\r\n    color\r\n' in result
+    assert '\r\n    center, behavior : str\r\n' in result
+    assert 'Whether the colour is analysed.' in result
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('line,corrected', [
+    ('See also: the color table.', 'See also: the colour table.'),
+    ('The color of the following:', 'The colour of the following:'),
+    ('Warning: color was analyzed.', 'Warning: colour was analysed.'),
+])
+def test_prose_is_not_read_as_a_label(words, mode, line, corrected):
+    source = docstring('    ' + line)
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(line, corrected)
