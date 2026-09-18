@@ -118,10 +118,12 @@ class TestRemovedMappings:
     Each of these was deleted because it wasn't a genuine US-to-UK spelling
     pair: archaic in both dialects (-gramme, waggon), distinct words/units
     (ton/tonne, groin/groyne), identical in both dialects (licensed/licensing),
-    running in the wrong direction (practise family), or sense-dependent,
+    running in the wrong direction (practise family), sense-dependent,
     where a common sense is spelt the same in British English (disk, annex,
-    meter, micrometer, license). See PRs #16, #32, #36, #37, #40, #41, #42, #44 and
-    issue #72.
+    meter, micrometer, license), or a dated minority British variant whose
+    inflections were never mapped, so correcting the base form alone left a
+    document disagreeing with itself (dispatch). See PRs #16, #32, #36, #37,
+    #40, #41, #42, #44 and issues #72 and #82.
     """
 
     REMOVED = [
@@ -137,6 +139,7 @@ class TestRemovedMappings:
         "deflection", "inflection", "inflections", "reflection",
         "disk", "disks", "annex", "meter", "meters", "license", "licenses",
         "micrometer", "micrometers",
+        "dispatch",
     ]
 
     @pytest.mark.parametrize("word", REMOVED)
@@ -155,6 +158,14 @@ class TestRemovedMappings:
         assert corrector.correct_text("The program is great.")[0] == "The programme is great."
         assert corrector.correct_text("5 kilometer")[0] == "5 kilometre"
         assert corrector.correct_text("a videodisk")[0] == "a videodisc"
+
+    def test_dispatch_family_converts_consistently(self, corrector):
+        # The removed entry covered only the base form, so a document could read
+        # "despatch" beside an untouched "dispatched". No member converts now.
+        text = "Please dispatch the parcel, log the dispatched items it dispatches."
+        result, changes = corrector.correct_text(text)
+        assert result == text, f"one member of the dispatch family was corrected: {result}"
+        assert len(changes) == 0
 
 
 class TestPrefixMappingsKeepTrailingHyphen:
