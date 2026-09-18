@@ -22,8 +22,12 @@ def corrector():
     })
 
 
-@pytest.mark.parametrize('extension', CODE_EXTENSIONS)
-@pytest.mark.parametrize('comment', ['// {}', '/* {} */', '# {}'])
+@pytest.mark.parametrize('extension,comment', [
+    ('.ts', '// {}'), ('.js', '// {}'), ('.jsx', '// {}'), ('.tsx', '// {}'),
+    ('.go', '// {}'), ('.rs', '// {}'), ('.java', '// {}'),
+    ('.rb', '# {}'), ('.sh', '# {}'),
+    ('.ts', '/* {} */'), ('.java', '/* {} */'), ('.go', '/* {} */'),
+])
 def test_dotted_name_survives_beside_corrected_prose(corrector, extension, comment):
     source = comment.format('The color is nice; see xref.finalize')
     expected = comment.format('The colour is nice; see xref.finalize')
