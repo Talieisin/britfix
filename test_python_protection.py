@@ -562,7 +562,8 @@ def test_numpy_labels_survive_crlf(words, mode):
     ('Warning: color was analyzed.', 'Warning: colour was analysed.'),
 ])
 def test_prose_is_not_read_as_a_label(words, mode, line, corrected):
-    source = docstring('    ' + line)
+    source = docstring('    Parameters\n    ----------\n    x : int\n'
+                       '        Thing.\n\n    ' + line)
     assert PythonStrategy(mode).process(source, words)[0] == source.replace(line, corrected)
 
 
@@ -607,8 +608,51 @@ def test_every_label_form_contributes_a_protected_name(words, mode, label):
 
 @pytest.mark.parametrize('mode', MODES)
 def test_only_documented_names_are_harvested(words, mode):
-    # "Note:" is a label by shape, so "Note" is harvested and "behavior" is
-    # not: an undocumented word in the same file keeps its correction.
-    source = docstring('    Note: the behavior is analyzed.')
+    # An undocumented word in a file that does document names keeps its
+    # correction: the harvest is not a blanket exemption.
+    source = docstring('    Args:\n        color: the behavior is analyzed.')
     assert PythonStrategy(mode).process(source, words)[0] == source.replace(
         'the behavior is analyzed', 'the behaviour is analysed')
+
+
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('line,corrected', [
+    ('Deprecated (since the color release): use the center.',
+     'Deprecated (since the colour release): use the centre.'),
+    ('color (bool): Enable the center.', 'colour (bool): Enable the centre.'),
+])
+def test_typed_labels_outside_a_section_stay_prose(words, mode, line, corrected):
+    source = docstring('    ' + line)
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(line, corrected)
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_numpy_name_lines_need_an_indented_description(words, mode):
+    # Without this the section would run to the end of the docstring and take
+    # every trailing line shaped "word: anything" with it.
+    source = docstring('    Parameters\n    ----------\n    x : int\n        Thing.\n\n'
+                       '    Warning: color was analyzed.\n'
+                       '    Note: the behavior was organized.')
+    expected = (source.replace('color was analyzed', 'colour was analysed')
+                .replace('the behavior was organized', 'the behaviour was organised'))
+    assert PythonStrategy(mode).process(source, words)[0] == expected
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_an_underlined_heading_closes_the_section_before_it(words, mode):
+    source = docstring('    Parameters\n    ----------\n    color\n        Enable it.\n\n'
+                       '    Notes\n    -----\n    behavior\n'
+                       '        The behavior was analyzed.')
+    expected = source.replace('behavior', 'behaviour').replace('analyzed', 'analysed')
+    assert PythonStrategy(mode).process(source, words)[0] == expected
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_a_heading_without_an_underline_neither_opens_nor_closes(words, mode):
+    source = docstring('    Parameters\n    ----------\n    color\n        Enable it.\n\n'
+                       '    Notes\n    The behavior was analyzed.')
+    expected = source.replace('behavior', 'behaviour').replace('analyzed', 'analysed')
+    assert PythonStrategy(mode).process(source, words)[0] == expected
+
