@@ -512,35 +512,31 @@ NUMPY_BODY = (
     '    Parameters\n'
     '    ----------\n'
     '    color\n'
-    '        Whether the color is analyzed.\n'
+    '        Whether the value is analyzed.\n'
     '    center, behavior : str\n'
-    '        The behavior was organized.\n'
+    '        The mode was organized.\n'
     '    **color : dict\n'
-    '        Extra color options.\n'
+    '        Extra options to finalize.\n'
     '\n'
     '    Returns\n'
     '    -------\n'
     '    center\n'
-    '        The organized color.\n'
+    '        The organized result.\n'
     '\n'
     '    Notes\n'
     '    -----\n'
-    '    The color was analyzed.'
+    '    finalize\n'
+    '        Not a parameter, so this line is analyzed prose.'
 )
 
 
 @pytest.mark.parametrize('mode', MODES)
 def test_numpy_name_lines_preserved_and_descriptions_corrected(words, mode):
     source = docstring(NUMPY_BODY)
-    expected = source
-    for before, after in [
-        ('Whether the color is analyzed.', 'Whether the colour is analysed.'),
-        ('The behavior was organized.', 'The behaviour was organised.'),
-        ('Extra color options.', 'Extra colour options.'),
-        ('The organized color.', 'The organised colour.'),
-        ('The color was analyzed.', 'The colour was analysed.'),
-    ]:
-        expected = expected.replace(before, after)
+    # Every description is corrected; the name lines, and the Notes line that
+    # only looks like one, are the difference.
+    expected = (source.replace('analyzed', 'analysed').replace('organized', 'organised')
+                .replace('finalize', 'finalise'))
     assert PythonStrategy(mode).process(source, words)[0] == expected
 
 
@@ -556,7 +552,7 @@ def test_numpy_labels_survive_crlf(words, mode):
     result = PythonStrategy(mode).process(source, words)[0]
     assert '\r\n    color\r\n' in result
     assert '\r\n    center, behavior : str\r\n' in result
-    assert 'Whether the colour is analysed.' in result
+    assert 'Whether the value is analysed.' in result
 
 
 @pytest.mark.parametrize('mode', MODES)
@@ -568,3 +564,51 @@ def test_numpy_labels_survive_crlf(words, mode):
 def test_prose_is_not_read_as_a_label(words, mode, line, corrected):
     source = docstring('    ' + line)
     assert PythonStrategy(mode).process(source, words)[0] == source.replace(line, corrected)
+
+
+HARVESTED = '''def f(**kwargs):
+    """Doc.
+
+    Args:
+        color: Enable output.
+        value: Alias for color.
+
+    The color option is analyzed on the way in.
+    """
+    # The color and the behavior are organized elsewhere.
+'''
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_documented_names_protect_prose_across_the_file(words, mode):
+    # A documented name is code, so it is protected in later prose and in
+    # comments, not only on the label line that documents it.
+    expected = (HARVESTED.replace('analyzed', 'analysed').replace('organized', 'organised')
+                .replace('behavior', 'behaviour'))
+    assert PythonStrategy(mode).process(HARVESTED, words)[0] == expected
+
+
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('label', [
+    '    Args:\n        color: Enable it.',
+    '    Args:\n        color (bool): Enable it.',
+    '    :param color: Enable it.',
+    '    :param bool color: Enable it.',
+    '    :ivar color: Enable it.',
+    '    :type color: bool',
+    '    Parameters\n    ----------\n    color\n        Enable it.',
+    '    Parameters\n    ----------\n    center, color : str\n        Enable it.',
+])
+def test_every_label_form_contributes_a_protected_name(words, mode, label):
+    source = docstring(label) + '# The color was analyzed.\n'
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(
+        'analyzed', 'analysed')
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_only_documented_names_are_harvested(words, mode):
+    # "Note:" is a label by shape, so "Note" is harvested and "behavior" is
+    # not: an undocumented word in the same file keeps its correction.
+    source = docstring('    Note: the behavior is analyzed.')
+    assert PythonStrategy(mode).process(source, words)[0] == source.replace(
+        'the behavior is analyzed', 'the behaviour is analysed')

@@ -30,7 +30,7 @@ _NAMED_DEFINITIONS = (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef,
 # "name:", "name : type", "name (bool):", "name (int, optional):", "**kw (dict):".
 # A word followed by a space rather than a colon cannot start a label, so an
 # ordinary sentence that happens to end in a colon stays prose.
-_GOOGLE_LABEL = re.compile(r'(?m)^[ \t]*\*{0,2}\w+(?:[ \t]*\([^()\r\n]*\))?[ \t]*:')
+_GOOGLE_LABEL = re.compile(r'(?m)^[ \t]*\*{0,2}(\w+)(?:[ \t]*\([^()\r\n]*\))?[ \t]*:')
 
 # Sphinx info fields whose payload names a parameter, attribute or exception.
 # Longest first so ":parameter x:" is not read as ":param" followed by "eter x".
@@ -39,14 +39,15 @@ _SPHINX_FIELDS = ('param', 'parameter', 'arg', 'argument', 'key', 'keyword',
                   'raises', 'raise', 'except', 'exception')
 _SPHINX_FIELD = re.compile(
     r'(?m)^[ \t]*:(?:' + '|'.join(sorted(_SPHINX_FIELDS, key=len, reverse=True))
-    + r')[ \t]+[^:\r\n]+:')
+    + r')[ \t]+([^:\r\n]+):')
 
 # The three type fields are the one exception to protecting only the label: the
 # payload after their closing colon is a type expression by definition, never
 # prose, so ":type c: color" naming a class keeps that class name. Fields whose
 # payload is prose, ":returns:" and ":raises ValueError:" among them, are not
 # listed here and keep having their descriptions corrected.
-_SPHINX_TYPE_FIELD = re.compile(r'(?m)^[ \t]*:(?:vartype|rtype|type)(?=[ \t:])[^\r\n]*')
+_SPHINX_TYPE_FIELD = re.compile(
+    r'(?m)^[ \t]*:(?:vartype|rtype|type)(?=[ \t:])[ \t]*([^:\r\n]*):?[^\r\n]*')
 
 # NumPy style, found from the dashed underline rather than guessed at from
 # indentation. The backreference holds the underline to the heading's own
@@ -59,7 +60,7 @@ _NUMPY_SECTIONS = frozenset({'parameters', 'other parameters', 'attributes',
 # A name line is wholly names, optionally starred, optionally " : type". Any
 # other text at that indent is prose and keeps its corrections.
 _NUMPY_NAME = re.compile(
-    r'([ \t]*)\*{0,2}[A-Za-z_]\w*(?:[ \t]*,[ \t]*\*{0,2}[A-Za-z_]\w*)*'
+    r'([ \t]*)(\*{0,2}[A-Za-z_]\w*(?:[ \t]*,[ \t]*\*{0,2}[A-Za-z_]\w*)*)'
     r'(?:[ \t]*:[^\r\n]*)?[ \t]*')
 _LINE = re.compile(r'(?m)^[^\r\n]*')
 
@@ -91,8 +92,8 @@ def _inconsistent(detail):
     return ProcessingSkipped(f'Python offsets inconsistent: {detail}')
 
 
-def _numpy_label_spans(prose):
-    """Spans of the name lines of every recognised NumPy section."""
+def _numpy_labels(prose):
+    """Name lines of every recognised NumPy section, as (span, name) pairs."""
     headings = list(_NUMPY_HEADING.finditer(prose))
     sections = []
     for index, heading in enumerate(headings):
@@ -104,7 +105,7 @@ def _numpy_label_spans(prose):
         sections.append((heading.end(), end, heading.group(1)))
     if not sections:
         return []
-    spans = []
+    labels = []
     current = 0
     # Lines are visited once in order, so many sections cost no rescan.
     for line in _LINE.finditer(prose):
@@ -114,17 +115,36 @@ def _numpy_label_spans(prose):
             continue
         match = _NUMPY_NAME.fullmatch(line.group())
         if match and match.group(1) == sections[current][2]:
-            spans.append(line.span())
-    return spans
+            # One line may document several names against one description.
+            for name in match.group(2).split(','):
+                labels.append((line.span(), name.strip().lstrip('*')))
+    return labels
+
+
+def _parameter_labels(prose):
+    """Every parameter label as (span, documented name).
+
+    The span covers the label alone, never the description beside it. The name
+    is empty for a form that carries none, such as ":rtype: bool".
+    """
+    labels = [(match.span(), match.group(1)) for match in _GOOGLE_LABEL.finditer(prose)]
+    for match in _SPHINX_FIELD.finditer(prose):
+        # ":param str color:" carries the type first, so the name is last.
+        payload = match.group(1).split()
+        labels.append((match.span(), payload[-1].lstrip('*') if payload else ''))
+    for match in _SPHINX_TYPE_FIELD.finditer(prose):
+        labels.append((match.span(), match.group(1).strip().lstrip('*')))
+    return labels + _numpy_labels(prose)
 
 
 def _parameter_label_spans(prose):
     """Spans of Google, Sphinx and NumPy parameter labels, descriptions excluded."""
-    spans = [match.span() for match in _GOOGLE_LABEL.finditer(prose)]
-    spans += [match.span() for match in _SPHINX_FIELD.finditer(prose)]
-    spans += [match.span() for match in _SPHINX_TYPE_FIELD.finditer(prose)]
-    spans += _numpy_label_spans(prose)
-    return spans
+    return [span for span, _ in _parameter_labels(prose)]
+
+
+def _parameter_label_names(prose):
+    """Identifier names that a docstring documents as parameters."""
+    return {name for _, name in _parameter_labels(prose) if name.isidentifier()}
 
 
 class PythonStrategy:
@@ -198,6 +218,11 @@ class PythonStrategy:
             names = defined
         names.update(node.value for node in constants
                      if id(node) not in doc_ids and node.value.isidentifier())
+        # A name a docstring documents as a parameter names code just as a name
+        # the file defines does, so it protects its prose mentions file-wide
+        # rather than only inside the docstring that documents it.
+        for doc in docs:
+            names.update(_parameter_label_names(doc.value))
 
         regions = []
         try:

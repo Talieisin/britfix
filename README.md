@@ -285,6 +285,8 @@ Docstring parameter labels are preserved, and only the label: the description be
 - `:type`, `:vartype` and `:rtype` preserve the whole line, because their payload is a type expression rather than a description.
 - NumPy name lines inside a section whose heading carries a dashed underline (`Parameters`, `Other Parameters`, `Attributes`, `Returns`, `Yields`, `Raises`, `Receives`, `Warns`). A line at the heading's own indent that is wholly names, optionally starred and optionally followed by ` : type`, is preserved; the indented description below it is still corrected. A heading without an underline, or one outside that list such as `Notes`, is ordinary prose.
 
+A name recognised as a parameter label is protected file-wide: it is left alone everywhere else in that file's comments and docstrings, not only in the docstring that documents it, so a description such as `Alias for color` keeps the name it refers to. Matching is case-sensitive, as it is for identifiers, so documenting `Color:` does not protect `color`.
+
 Labels are matched per line, so a file whose only line ending is a bare carriage return is not scanned for them.
 
 Words that name a Python identifier are also left alone in comments and docstrings. Matching is file-local and case-sensitive, and is controlled by `strategies.code.python_identifier_protection` in `config.json`:
