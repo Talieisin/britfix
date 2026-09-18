@@ -100,14 +100,23 @@ payload = {'colorScheme': x}    # Dict key - unchanged
 ```
 
 Inside a comment or docstring, a dotted name such as `xref.finalize` and a
-backtick code span are left alone, so a comment cannot end up naming an API that
-does not exist (issue #63). A span opened with two backticks closes on the next
-pair, so `` ``behavior`` `` survives whole; an unclosed span preserves the rest
-of that one comment. This applies to every code extension and to stylesheet
-comments (`.css`, `.scss`, `.sass`, `.less`), matching the protection `.py`
-files already had. A decimal number such as `1.5` has the same shape and is
-preserved too, which costs nothing. URLs are not protected here, so the path of
-a URL written in a comment can still be corrected.
+backtick code span are left alone, so a comment cannot end up naming an API
+that does not exist (issue #63). This applies to every code extension and to
+stylesheet comments (`.css`, `.scss`, `.sass`, `.less`).
+
+A dotted name is protected exactly as it is in a `.py` file, and so is an
+ordinary backtick span. A span opened with two backticks closes on the next
+pair, so a double-backtick span survives whole. Two backtick cases are stricter
+here than in `.py`: a double-backtick span that encloses single backticks is
+preserved whole (in `.py` its inner text is still corrected), and an unclosed
+run preserves the rest of that one comment (in `.py` correction carries on).
+
+A decimal number such as `1.5` has the same shape as a dotted name and is
+preserved too, which costs nothing. A quoted phrase from `.britfixignore` still
+wins over all of this, including a phrase that contains a dot. Two things are
+deliberately not protected: a URL, so the path of a URL written in a comment can
+still be corrected, and a full stop with no space after it, so `color.Then`
+reads as a dotted name and neither word is corrected.
 
 ## Ignoring Words (`.britfixignore`)
 

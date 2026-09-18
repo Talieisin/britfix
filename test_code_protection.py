@@ -10,8 +10,10 @@ import pytest
 
 import britfix_core as core
 
-CODE_EXTENSIONS = ['.ts', '.js', '.jsx', '.tsx', '.rb', '.go', '.rs', '.sh', '.java']
-STYLE_EXTENSIONS = ['.css', '.scss']
+CODE_EXTENSIONS = ['.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.h', '.hpp',
+                   '.cs', '.rb', '.go', '.rs', '.swift', '.kt', '.scala', '.php',
+                   '.pl', '.sh']
+STYLE_EXTENSIONS = ['.css', '.scss', '.sass', '.less']
 
 
 @pytest.fixture
@@ -121,6 +123,48 @@ def test_python_files_keep_their_own_strategy(corrector):
               '    xref.finalize()\n')
     assert not isinstance(core.get_file_strategy('.py'), core.CodeStrategy)
     assert core.get_file_strategy('.py').process(source, corrector)[0] == source
+
+
+@pytest.mark.parametrize('extension', ['.ts', '.rb', '.css', '.scss'])
+def test_quoted_phrase_outranks_the_dotted_split(corrector, extension):
+    """A quoted phrase is the one way to demand exact bytes, so it wins.
+
+    Phrase masking lives inside correct_text, which only sees one call's worth
+    of text, so a phrase straddling a dotted name has to be protected here or
+    the split would hide it.
+    """
+    phrases = {'node.js behavior', 'color 2.0 release'}
+    with_phrases = core.SpellingCorrector(dict(corrector.dictionary), phrases)
+    source = '/* see node.js behavior in the color 2.0 release, and the color */'
+    strategy = core.get_file_strategy(extension)
+    result, counts = strategy.process(source, with_phrases)
+    assert result == source.replace('and the color', 'and the colour')
+    assert counts == {'color': 1}
+    replacements = strategy.find_safe_replacements(source, with_phrases)
+    assert [old for _, _, old, _ in replacements] == ['color']
+
+
+@pytest.mark.parametrize('extension,scope', [
+    ('.ts', ''), ('.ts', 'code:'), ('.css', ''), ('.css', 'css:'),
+])
+def test_dotted_phrase_from_an_ignore_file_is_preserved(tmp_path, corrector, extension, scope):
+    core._ignore_cache.clear()
+    (tmp_path / '.git').mkdir()
+    (tmp_path / '.britfixignore').write_text(
+        f'{scope}"node.js behavior"\n{scope}"color 2.0 release"\n')
+    target = tmp_path / ('sample' + extension)
+    target.touch()
+
+    words, scoped, phrases, scoped_phrases = core.discover_ignore_words(str(target))
+    configured = core.get_corrector_for_strategy(
+        dict(corrector.dictionary), words, scoped,
+        core.get_file_strategy_name(extension), phrases, scoped_phrases)
+    source = '/* see node.js behavior in the color 2.0 release, and the color */'
+    result, counts = core.get_file_strategy(extension).process(source, configured)
+    core._ignore_cache.clear()
+
+    assert result == source.replace('and the color', 'and the colour')
+    assert counts == {'color': 1}
 
 
 @pytest.mark.parametrize('text,start,expected', [

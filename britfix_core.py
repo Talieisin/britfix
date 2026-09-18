@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Set
 from collections import defaultdict
 
+from britfix_spans import merge_spans
+
 
 class ConfigError(Exception):
     """Raised when config.json is missing or invalid."""
@@ -652,11 +654,12 @@ _BACKTICK_RUN = re.compile(r'`+')
 def _backtick_span_end(text: str, start: int) -> int:
     """End offset of the backtick code span opening at ``start``.
 
-    A span opened with N backticks closes on the next run of exactly N, so
-    ``behavior`` and `` `color` `` survive whole. With no matching closing run
-    the remainder is treated as part of the span, which is what an unclosed
-    single backtick already did: a bounded missed correction inside one
-    comment, never a rewrite.
+    A span opened with N backticks closes on the next run of exactly N, so a
+    double-backtick span survives whole even when it encloses single backticks
+    (test_code_protection.py carries the literal forms). With no matching
+    closing run the remainder is treated as part of the span, which is what an
+    unclosed single backtick already did: a bounded missed correction inside
+    one comment, never a rewrite.
     """
     opener = _BACKTICK_RUN.match(text, start)
     width = opener.end() - start
@@ -666,15 +669,30 @@ def _backtick_span_end(text: str, start: int) -> int:
     return len(text)
 
 
+def _protected_spans(segment: str, corrector: SpellingCorrector) -> List[Tuple[int, int]]:
+    """Merged spans of the segment that must reach the output verbatim.
+
+    Dotted names, plus any configured quoted phrase. Phrase masking normally
+    happens inside ``correct_text``, which can only see one call's worth of
+    text, so a phrase that straddles a dotted name (``node.js behavior``)
+    would be missed once the segment is split. Carrying the phrase spans here
+    keeps that promise: a quoted phrase is the one way a user can demand exact
+    bytes, so it must outrank the split.
+    """
+    spans = [match.span() for match in _DOTTED_NAME.finditer(segment)]
+    spans += corrector._phrase_spans(segment)
+    return merge_spans(spans)
+
+
 def _correct_prose(segment: str, corrector: SpellingCorrector) -> Tuple[str, Dict[str, int]]:
-    """Correct an unquoted comment segment, leaving dotted names alone.
+    """Correct an unquoted comment segment, leaving protected spans alone.
 
     ``xref.finalize`` in a comment names a real function, so rewriting it to
     ``xref.finalise`` leaves the comment pointing at something that does not
-    exist. Only the text between dotted names is corrected. Splitting there is
-    safe because the pattern is word-bounded, so no dictionary word can span a
-    split. A decimal such as ``1.5`` matches the same shape and is preserved
-    too, which is harmless: digits carry no spelling.
+    exist. Only the text between protected spans is corrected. Splitting at a
+    dotted name is safe because the pattern is word-bounded, so no dictionary
+    word can span a split. A decimal such as ``1.5`` matches the same shape
+    and is preserved too, which is harmless: digits carry no spelling.
     """
     total_changes = defaultdict(int)
     parts = []
@@ -688,10 +706,10 @@ def _correct_prose(segment: str, corrector: SpellingCorrector) -> Tuple[str, Dic
         for word, count in changes.items():
             total_changes[word] += count
 
-    for match in _DOTTED_NAME.finditer(segment):
-        correct(segment[position:match.start()])
-        parts.append(match.group())
-        position = match.end()
+    for start, end in _protected_spans(segment, corrector):
+        correct(segment[position:start])
+        parts.append(segment[start:end])
+        position = end
     correct(segment[position:])
 
     return ''.join(parts), dict(total_changes)
