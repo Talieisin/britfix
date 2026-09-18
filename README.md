@@ -303,12 +303,12 @@ Because those two reads straddle the corrector, another writer can change the
 file inside that window. When the difference is not a word-for-word substitution
 between two words, the hook does not attribute it to britfix: it reports that
 the file differs from what was written, without a count and without claiming the
-change was a correction. A word here means letters and hyphens, wide enough to
-cover a prefix correction that rewrites across a hyphen (`feto-scan` becomes
-`foetoscan`), because that check discards the whole file's report rather than
-one entry: too narrow a test would let a single unrecognised pair take nine
-perfectly explainable corrections down with it. A line that was added to or
-deleted from is treated the same way, since britfix substitutes words in place
+change was a correction. A word here means letters and hyphens. No mapping in
+the dictionary needs the hyphen today, since every entry rewrites one word into
+another, but the check discards the whole file's report rather than one entry,
+so a mapping that moved or dropped a hyphen would let one unrecognised pair
+take nine perfectly explainable corrections down with it. A line that was added
+to or deleted from is treated the same way, since britfix substitutes words in place
 and never inserts or removes one.
 
 Shape alone cannot tell a correction from another writer swapping one word for

@@ -291,14 +291,15 @@ def is_correction_shaped(token: str) -> bool:
     """True if a token could be one side of a spelling correction: letters,
     possibly with hyphens, and at least one letter.
 
-    Hyphens are allowed because the dictionary's prefix entries rewrite across
-    one. `feto-` maps to `foeto` with no trailing hyphen, so `feto-scan` becomes
-    `foetoscan`: a real correction whose two sides are not plain words. Four
-    entries need that today (estr-, feto-, leuk-, paleo-), but the reason to
-    allow it is that the dictionary can grow another awkward one, and that the
-    cost of rejecting a legitimate pair is high: the check below collapses the
-    whole file's report, so one unrecognised pair would take down a report of
-    nine perfectly explainable corrections alongside it."""
+    No mapping in the dictionary needs the hyphen as things stand: every entry
+    rewrites one word into another, so every pair is plain letters. The reason
+    to accept the shape anyway is the cost of being wrong about it. A mapping
+    that dropped or moved a hyphen would turn `a-b` into `ab`, a real
+    correction whose two sides are not plain words, and the check below
+    discards the whole file's report rather than one entry, so a single
+    unrecognised pair would take nine perfectly explainable corrections down
+    with it. The dictionary has held such an entry before and can again; this
+    does not depend on whether it does."""
     return (bool(token)
             and all(char == '-' or char.isalpha() for char in token)
             and any(char.isalpha() for char in token))

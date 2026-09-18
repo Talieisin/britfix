@@ -492,22 +492,22 @@ def test_output_does_not_claim_britfix_made_an_unexplained_change():
     assert 'Re-read the file' in ctx
 
 
-def test_summarise_explains_a_prefix_correction_that_keeps_its_hyphen():
-    # estr- to oestr- and paleo- to palaeo- keep the trailing hyphen.
-    s = h.summarise_changes(_b("an estr-levels study"), _b("an oestr-levels study"))
-    assert s['detailed'] is True
-    assert s['items'] == [(1, 'estr', 'oestr')]
-
-
 def test_summarise_explains_a_prefix_correction_across_a_hyphen():
     # The dictionary keys its prefix entries with a trailing hyphen (`feto-`),
     # but the diff of `feto-scan` becoming `foeto-scan` yields the pair `feto`
     # to `foeto`, which is not a key. The lookup tries the hyphen too, so the
-    # correction is recognised. Both sides are built here rather than read from
-    # the dictionary, so a dictionary change cannot quietly rewrite the test.
-    s = h.summarise_changes(_b("a feto-scan today"), _b("a foeto-scan today"))
-    assert s['detailed'] is True
-    assert s['items'] == [(1, 'feto', 'foeto')]
+    # correction is recognised and can carry the file on its own.
+    #
+    # Both sides are constructed here rather than read from the dictionary.
+    # That is deliberate: it is why these cases survived the dictionary
+    # changing underneath them, and anyone adding a case should keep to it.
+    for before, after, pair in [
+        ("a feto-scan today", "a foeto-scan today", (1, 'feto', 'foeto')),
+        ("an estr-levels study", "an oestr-levels study", (1, 'estr', 'oestr')),
+    ]:
+        s = h.summarise_changes(_b(before), _b(after))
+        assert s['detailed'] is True
+        assert s['items'] == [pair]
 
 
 def test_a_word_britfix_does_not_know_cannot_carry_a_file_alone():
