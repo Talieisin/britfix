@@ -8,6 +8,7 @@ import sys
 import os
 import subprocess
 import re
+import stat
 import difflib
 from pathlib import Path
 from datetime import datetime
@@ -169,10 +170,20 @@ def read_hook_input(stream=sys.stdin) -> dict:
             continue
 
 
+# CLI diagnostics worth relaying. The skip kinds explain why a file kept its US
+# spellings. The ignore-file kinds are faults in .britfixignore, which matter
+# because the hook's own message tells the model to edit that file: if it gets
+# the syntax wrong, the entry is dropped, the correction comes back, and without
+# this the reason appears nowhere the user or the model can see.
+_SKIP_PREFIXES = ('britfix: skipped ', 'britfix: skipping malformed ')
+_IGNORE_FAULT_PREFIXES = ('britfix: unknown strategy ',)
+_DIAGNOSTIC_PREFIXES = _SKIP_PREFIXES + _IGNORE_FAULT_PREFIXES
+
+
 def run_britfix(file_path: str) -> tuple[bool, str, list]:
     """
     Run britfix on a file.
-    Returns (success, error_message, skipped_notes).
+    Returns (success, error_message, diagnostics).
 
     What changed is NOT read from the CLI's stdout. That stdout prints each word
     twice, once in the per-file block and once in the totals block, so the old
@@ -192,14 +203,14 @@ def run_britfix(file_path: str) -> tuple[bool, str, list]:
             cwd=HOOK_DIR
         )
 
-        skipped = []
+        diagnostics = []
         for line in result.stderr.splitlines():
-            if line.startswith('britfix: skipped '):
+            if line.startswith(_DIAGNOSTIC_PREFIXES):
                 log(line)
-                skipped.append(line)
+                diagnostics.append(line)
         if result.returncode == 0:
-            return True, "", skipped
-        return False, (result.stderr.strip() or result.stdout.strip()), skipped
+            return True, "", diagnostics
+        return False, (result.stderr.strip() or result.stdout.strip()), diagnostics
 
     except subprocess.TimeoutExpired:
         return False, "Timeout", []
@@ -230,6 +241,22 @@ MAX_MESSAGE_CHARS = 1500
 # word-for-word rather than smearing across the punctuation around it.
 _TOKEN_RE = re.compile(r"[^\W\d_]+|\W+|\d+|_+", re.UNICODE)
 
+# A line ends at CRLF, CR or LF and nothing else. str.splitlines() also splits
+# on form feed, vertical tab, NEL, U+2028 and more, none of which an editor
+# counts as a line, so it would report line numbers nobody can act on. This
+# module's family has form here: a form-feed offset once produced 'colourr'.
+_LINE_SPLIT_RE = re.compile(r'\r\n|\r|\n')
+
+# Ceiling on diff work for one file, in before-characters times after-
+# characters. The matcher is quadratic in line length, and by the time it runs
+# the CLI subprocess timeout has already been spent, so nothing else can stop a
+# long line. Measured on this machine at about 575 million units per second, so
+# this is roughly a quarter of a second of work; beyond it the file is reported
+# as changed without detail rather than stalling the session. In single-line
+# terms it covers a line of about 12,000 characters, well past any hand-written
+# paragraph and short of a minified asset.
+DIFF_WORK_BUDGET = 150_000_000
+
 def is_correction_shaped(token: str) -> bool:
     """True if a token could be one side of a spelling correction: letters,
     possibly with hyphens, and at least one letter.
@@ -248,33 +275,60 @@ def is_correction_shaped(token: str) -> bool:
 
 
 def read_file_bytes(path: str):
-    """Read a file as bytes, or None if it cannot be read.
+    """Read a regular file as bytes, or None if it cannot be read.
 
     None means 'cannot tell', never 'empty': the file may have been deleted or
-    replaced between the edit and the hook, and that must not raise."""
+    replaced between the edit and the hook, and that must not raise.
+
+    Only regular files are read. A plain open() on a FIFO with no writer blocks
+    for ever, and this runs after every edit, so a hang here would wedge the
+    session with no output and no timeout to rescue it: the hook's only timeout
+    is around the CLI subprocess, which has already returned by now. O_NONBLOCK
+    makes the open itself return rather than wait, and the check is made against
+    the descriptor actually opened, so the answer cannot go stale between the
+    test and the read."""
+    fd = -1
     try:
-        with open(path, 'rb') as f:
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0))
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, 'rb') as f:
+            fd = -1  # fdopen owns it now
             return f.read()
     except OSError:
         return None
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
-def pair_line_changes(before_line: str, after_line: str) -> list:
-    """Pair up the words a single line replaced: [(before, after), ...]."""
+def pair_line_changes(before_line: str, after_line: str) -> tuple:
+    """Describe what a single line replaced: (pairs, explained).
+
+    `explained` is False when the line changed in a way a spelling correction
+    does not produce. A correction substitutes words in place, so every opcode
+    must be 'equal' or 'replace': an inserted or deleted token means something
+    other than britfix wrote to the line, and reporting that as a correction
+    would be exactly the false confidence the caller's guard exists to avoid."""
     before_tokens = _TOKEN_RE.findall(before_line)
     after_tokens = _TOKEN_RE.findall(after_line)
     pairs = []
     matcher = difflib.SequenceMatcher(None, before_tokens, after_tokens, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag != 'replace':
+        if tag == 'equal':
             continue
+        if tag != 'replace':
+            return [], False  # insert or delete: not a substitution
         if (i2 - i1) == (j2 - j1):
             for offset in range(i2 - i1):
                 pairs.append((before_tokens[i1 + offset], after_tokens[j1 + offset]))
         else:
             # Uneven replacement: report the whole span rather than mispair it.
             pairs.append((''.join(before_tokens[i1:i2]), ''.join(after_tokens[j1:j2])))
-    return pairs
+    return pairs, True
 
 
 def summarise_changes(before, after) -> dict:
@@ -288,23 +342,38 @@ def summarise_changes(before, after) -> dict:
     substitution never produces and a truncated write does). The report then
     says a change happened without inventing a count."""
     empty = {'changed': False, 'detailed': False, 'total': 0, 'items': []}
+    unexplained = {'changed': True, 'detailed': False, 'total': 0, 'items': []}
     if before is None or after is None or before == after:
         return empty
 
     try:
-        before_lines = before.decode('utf-8', errors='replace').splitlines()
-        after_lines = after.decode('utf-8', errors='replace').splitlines()
+        before_lines = _LINE_SPLIT_RE.split(before.decode('utf-8', errors='replace'))
+        after_lines = _LINE_SPLIT_RE.split(after.decode('utf-8', errors='replace'))
     except Exception:
-        return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+        return unexplained
 
     if len(before_lines) != len(after_lines):
-        return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+        return unexplained
 
     items = []
+    budget = DIFF_WORK_BUDGET
     for index, (before_line, after_line) in enumerate(zip(before_lines, after_lines), start=1):
         if before_line == after_line:
             continue
-        for old, new in pair_line_changes(before_line, after_line):
+
+        # Charge the line before doing the work, not after. The matcher is
+        # quadratic in the number of tokens, so a single unwrapped paragraph or
+        # minified blob costs tens of seconds, and there is no timeout left at
+        # this point to cut it short. Measured: 2,200 tokens 0.07s, 8,800
+        # tokens 1.1s, 35,200 tokens 17.7s.
+        budget -= len(before_line) * len(after_line)
+        if budget < 0:
+            return unexplained
+
+        pairs, explained = pair_line_changes(before_line, after_line)
+        if not explained:
+            return unexplained
+        for old, new in pairs:
             items.append((index, old, new))
 
     if not items:
@@ -334,10 +403,10 @@ def format_change_list(items: list, limit: int = MAX_REPORTED_CHANGES) -> str:
     return ', '.join(shown)
 
 
-def describe_skips(skipped_notes: list) -> str:
+def describe_skips(notes: list) -> str:
     """One short clause naming why britfix declined to correct part of a file."""
     reasons = []
-    for note in skipped_notes:
+    for note in notes:
         detail = note[len('britfix: skipped '):].strip()
         try:
             parsed = json.loads(detail)
@@ -357,7 +426,7 @@ def truncate(text: str, limit: int = MAX_MESSAGE_CHARS) -> str:
     return text if len(text) <= limit else text[:limit - 3] + '...'
 
 
-def build_hook_output(file_path: str, summary: dict, error: str, skipped_notes: list) -> dict:
+def build_hook_output(file_path: str, summary: dict, error: str, diagnostics: list) -> dict:
     """Build the PostToolUse JSON output describing what happened to file_path.
 
     Returns {} when there is nothing worth saying, which is the common case."""
@@ -394,12 +463,27 @@ def build_hook_output(file_path: str, summary: dict, error: str, skipped_notes: 
                 f"before editing it further."
             )
 
-    if skipped_notes:
+    skips = [n for n in diagnostics if n.startswith(_SKIP_PREFIXES)]
+    ignore_faults = [n for n in diagnostics if n.startswith(_IGNORE_FAULT_PREFIXES)]
+
+    if skips:
         # Worth telling the model even when nothing changed: it explains why the
         # US spellings it wrote are still there.
         model_parts.append(
             f"britfix skipped correcting part or all of {file_path} "
-            f"({describe_skips(skipped_notes)}), so spellings there are unchanged."
+            f"({describe_skips(skips)}), so spellings there are unchanged."
+        )
+
+    if ignore_faults:
+        # A broken .britfixignore entry is the user's to fix and the model's to
+        # know about, since the hook's own advice is what sends it to that file.
+        detail = truncate('; '.join(ignore_faults), 400)
+        user_parts.append(detail)
+        model_parts.append(
+            f"An entry in .britfixignore was not accepted ({detail}), so it "
+            f"exempts nothing and the words it names are still corrected. A "
+            f"phrase must be quoted, and a token containing a colon, such as "
+            f"\"w:color\", is read as a strategy scope unless it is quoted."
         )
 
     if error:
@@ -449,13 +533,13 @@ def process_posttooluse(hook_input: dict) -> dict:
     # Read before and after so the report describes what actually happened to
     # the bytes on disk, independently of anything the CLI prints.
     before = read_file_bytes(file_path)
-    success, error, skipped_notes = run_britfix(file_path)
+    success, error, diagnostics = run_britfix(file_path)
     after = read_file_bytes(file_path)
 
     # Reporting must never be able to fail an edit: degrade to no report.
     try:
         summary = summarise_changes(before, after)
-        output = build_hook_output(file_path, summary, '' if success else error, skipped_notes)
+        output = build_hook_output(file_path, summary, '' if success else error, diagnostics)
     except Exception as e:
         log(f"[Britfix Error] Could not summarise changes for {file_path}: {e}")
         return {}

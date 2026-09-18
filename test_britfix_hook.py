@@ -4,6 +4,7 @@ the change report the hook surfaces after a rewrite."""
 import json
 import os
 import subprocess
+import time
 import unittest.mock as mock
 import pytest
 import britfix_hook as h
@@ -519,3 +520,144 @@ def test_is_correction_shaped_rejects_anything_that_is_not_a_word():
     assert not h.is_correction_shaped('1')
     assert not h.is_correction_shaped('-')
     assert not h.is_correction_shaped('')
+
+
+# --- bounded work and non-regular files ------------------------------------
+
+def test_a_very_long_line_is_not_summarised_and_returns_promptly():
+    # The matcher is quadratic in line length and runs after the CLI subprocess
+    # timeout has already been spent, so nothing else can stop it. A single
+    # unwrapped line (a minified asset, a one-line JSON or CSS blob) took about
+    # 50 seconds at 138 KB before this bound, with the session stalled and no
+    # output to explain it. Over budget, the file falls through to the existing
+    # no-detail report, which is safe and immediate.
+    line = ("The color of the organization was analyzed at the center here. " * 3000)
+    before = line.encode()
+    after = line.replace("color", "colour", 5).encode()
+    started = time.perf_counter()
+    s = h.summarise_changes(before, after)
+    elapsed = time.perf_counter() - started
+    assert s['changed'] is True
+    assert s['detailed'] is False
+    assert elapsed < 5.0, f"took {elapsed:.1f}s: the work bound is not holding"
+
+
+def test_an_ordinary_unwrapped_paragraph_is_still_summarised():
+    # The bound must not cost the normal case. A long hand-written paragraph
+    # without hard wrapping is well inside it.
+    line = "The color scheme " + ("of assorted things and various other matters " * 100)
+    before = line.encode()
+    after = line.replace("color", "colour").encode()
+    s = h.summarise_changes(before, after)
+    assert s['detailed'] is True
+    assert s['items'] == [(1, 'color', 'colour')]
+
+
+@pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason="no FIFOs on this platform")
+def test_read_file_bytes_does_not_block_on_a_fifo(tmp_path):
+    # A plain open() on a FIFO with no writer blocks for ever, and this runs
+    # after every edit, so it would wedge the session with no timeout to rescue
+    # it. OSError never fires for that case: the call simply never returns.
+    fifo = tmp_path / "pipe.md"
+    os.mkfifo(str(fifo))
+    started = time.perf_counter()
+    assert h.read_file_bytes(str(fifo)) is None
+    assert time.perf_counter() - started < 5.0
+
+
+def test_read_file_bytes_returns_none_for_a_directory(tmp_path):
+    assert h.read_file_bytes(str(tmp_path)) is None
+
+
+def test_read_file_bytes_reads_a_regular_file(tmp_path):
+    f = tmp_path / "note.md"
+    f.write_bytes(b"the color")
+    assert h.read_file_bytes(str(f)) == b"the color"
+
+
+# --- insertions and deletions are not corrections ---------------------------
+
+def test_an_inserted_word_is_not_reported_as_a_correction():
+    # britfix substitutes words in place; it never inserts one. An insertion
+    # means another writer reached the file inside the window between the
+    # before-read and the after-read, and calling that a correction would
+    # attach the do-not-revert instruction to someone else's edit.
+    s = h.summarise_changes(_b("the color is nice"), _b("the color is really nice"))
+    assert s['changed'] is True
+    assert s['detailed'] is False
+    assert s['items'] == []
+
+
+def test_a_deleted_word_is_not_reported_as_a_correction():
+    s = h.summarise_changes(_b("the color is really nice"), _b("the color is nice"))
+    assert s['changed'] is True
+    assert s['detailed'] is False
+
+
+def test_a_correction_beside_a_foreign_insertion_is_not_reported():
+    # The corrections are real, but the line also gained a word, so the line as
+    # a whole is not explained and nothing from it is claimed.
+    s = h.summarise_changes(_b("the color is nice"), _b("the colour is really nice"))
+    assert s['detailed'] is False
+
+
+# --- line numbers count lines, not control characters -----------------------
+
+def test_line_numbers_ignore_form_feeds_and_unicode_separators():
+    # str.splitlines() splits on form feed, vertical tab, NEL and U+2028 among
+    # others, none of which an editor counts as a line, so every later line
+    # number would be reported one too high. This module's family has a history
+    # here: a form-feed offset once produced 'colourr'.
+    before = _b("alpha\x0cbeta\nthe color\n")
+    after = _b("alpha\x0cbeta\nthe colour\n")
+    s = h.summarise_changes(before, after)
+    assert s['items'] == [(2, 'color', 'colour')]
+
+
+def test_line_numbers_are_right_after_a_unicode_line_separator():
+    before = "alpha beta\nthe color\n".encode('utf-8')
+    after = "alpha beta\nthe colour\n".encode('utf-8')
+    s = h.summarise_changes(before, after)
+    assert s['items'] == [(2, 'color', 'colour')]
+
+
+def test_crlf_line_endings_still_count_correctly():
+    before = _b("alpha\r\nthe color\r\n")
+    after = _b("alpha\r\nthe colour\r\n")
+    s = h.summarise_changes(before, after)
+    assert s['items'] == [(2, 'color', 'colour')]
+
+
+# --- a broken .britfixignore entry must not be swallowed --------------------
+
+def test_unknown_strategy_diagnostic_is_forwarded():
+    # The hook's own message tells the model to edit .britfixignore, so when the
+    # model gets the syntax wrong the CLI's complaint has to reach someone.
+    note = "britfix: unknown strategy 'w' in .britfixignore, skipping"
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = note + "\n"
+
+    with mock.patch.object(h.subprocess, 'run', return_value=Result()):
+        ok, error, diagnostics = h.run_britfix('/tmp/x.md')
+    assert diagnostics == [note]
+
+
+def test_unknown_strategy_is_reported_to_both_user_and_model():
+    note = "britfix: unknown strategy 'w' in .britfixignore, skipping"
+    out = h.build_hook_output('/repo/notes.md', _changed("same", "same"), '', [note])
+    assert 'unknown strategy' in out['systemMessage']
+    ctx = out['hookSpecificOutput']['additionalContext']
+    assert 'exempts nothing' in ctx
+    assert 'quoted' in ctx
+
+
+def test_malformed_json_diagnostic_is_treated_as_a_skip():
+    # A file-level skip explains why nothing changed; it is not a config fault,
+    # so it goes to the model and not to the user as a warning.
+    note = "britfix: skipping malformed JSON (Expecting value at line 1, column 1)"
+    out = h.build_hook_output('/repo/a.json', _changed("same", "same"), '', [note])
+    assert 'systemMessage' not in out
+    assert 'malformed JSON' in out['hookSpecificOutput']['additionalContext']

@@ -276,9 +276,10 @@ neither has to discover the rewrite by reading the diff afterwards.
 britfix rewrote 2 spellings in /path/to/notes.md: L12 color->colour, L40 center->centre
 ```
 
-The report names the path as given, the true number of changes and the line
-number of each, so a prose correction can be told apart from a rewritten
-machine-readable token. At most five changes are listed, then `+N more`.
+The report names the file, the true number of changes and the line number of
+each, so you can go straight to what moved. The path is the one the tool was
+given, shortened only if it runs past 300 characters. At most five changes are
+listed, then `+N more`.
 
 The note to the model says the rewrite is deliberate and must not be reverted,
 and points at [`.britfixignore`](#ignoring-words-britfixignore) for the case
@@ -289,7 +290,10 @@ A file the hook did not change produces no output at all, which keeps the hook
 quiet on the great majority of edits. A `britfix: skipped` diagnostic is
 reported to the model, since it explains why spellings in that file are
 unchanged. A failure of the corrector itself, including a timeout, produces one
-line to you.
+line to you. So does a rejected `.britfixignore` entry, because an entry that
+the CLI will not accept exempts nothing and the correction simply returns; a
+phrase must be quoted, and a token containing a colon, such as `"w:color"`, is
+read as a strategy scope unless it is quoted.
 
 The count comes from comparing the file before and after the run, not from the
 CLI's own summary. That summary prints each word twice, once per file and once
@@ -303,14 +307,25 @@ change was a correction. A word here means letters and hyphens, wide enough to
 cover a prefix correction that rewrites across a hyphen (`feto-scan` becomes
 `foetoscan`), because that check discards the whole file's report rather than
 one entry: too narrow a test would let a single unrecognised pair take nine
-perfectly explainable corrections down with it. It reports effects rather than decisions,
-so it cannot say whether a correction landed in prose, a comment or a
-machine-readable token; only the line number tells you where to look.
+perfectly explainable corrections down with it. A line that was added to or
+deleted from is treated the same way, since britfix substitutes words in place
+and never inserts or removes one.
+
+The report describes effects rather than decisions, so it cannot say whether a
+correction landed in prose, a comment or a machine-readable token; only the line
+number tells you where to look. Establishing that would take the corrector's own
+account of what it decided, which the CLI does not yet emit.
+
+Summarising is also bounded: comparing a line is quadratic in its length, so a
+file whose changed lines are very long (a minified asset, or a one-line JSON or
+CSS blob) is reported as changed without detail rather than holding the session
+up. An ordinary unwrapped paragraph is far inside the bound.
 
 The hook never blocks an edit. It always exits 0 and always prints one JSON
 object, including when the corrector fails, times out, or the file is deleted
-between the edit and the hook. It reports what changed; it cannot undo or
-prevent anything, because the write has already happened by the time it runs.
+between the edit and the hook. Only regular files are read, so a named pipe
+cannot stall it. It reports what changed; it cannot undo or prevent anything,
+because the write has already happened by the time it runs.
 
 ### Debugging
 
