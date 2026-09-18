@@ -53,6 +53,7 @@ from britfix_core import (
     load_spelling_mappings,
     get_file_strategy,
     get_file_strategy_name,
+    is_supported_extension,
     discover_ignore_words,
     get_corrector_for_strategy,
     get_user_ignore_path,
@@ -407,6 +408,13 @@ Examples:
         try:
             # Get the appropriate processing strategy
             ext = os.path.splitext(filepath)[1].lower()
+            if not is_supported_extension(ext):
+                # Without this the file would be handled as plain text and have
+                # its code rewritten. Skipping is also what the hook already
+                # does for these extensions, so the two entry points agree.
+                raise ProcessingSkipped(
+                    f"no strategy configured for extension {ext or '(none)'}"
+                )
             strategy = get_file_strategy(ext)
             strategy_name = get_file_strategy_name(ext)
 

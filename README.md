@@ -64,6 +64,14 @@ Different file types are handled by different strategies, configured in `config.
 | **json** | `.json` | Only convert string values that contain whitespace (treats single-token strings as identifiers) |
 | **code** | `.py`, `.js`, `.ts`, etc. | Only convert comments and docstrings |
 
+An extension not listed above has no strategy, and both the CLI and the hook
+skip it rather than guessing. Plain text is not used as a fallback for files on
+disk: a `.pyi`, `.yaml`, `.lua` or extensionless file converted as plain text
+would have its identifiers and keys rewritten, not just its prose. The CLI
+reports each one as a `britfix: skipped` diagnostic and counts it separately. To
+process a new file type, add its extension to the appropriate strategy in
+`config.json`.
+
 ### JSON File Handling
 
 JSON values are corrected only when they contain whitespace. Single-token strings — `"center"`, `"colorScheme"`, `"src/Color.tsx"` — are treated as identifiers and left alone, since most JSON values in config files are programmatic, not prose. Multi-word values like `"The organization was reorganized"` are still corrected normally.

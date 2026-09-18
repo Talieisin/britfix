@@ -1208,6 +1208,10 @@ def _build_file_strategies() -> Dict[str, Tuple[str, FileProcessingStrategy]]:
 
 FILE_STRATEGIES = _build_file_strategies()
 
+# Every extension config.json configures a strategy for. The CLI gates on this
+# before processing a file on disk; see is_supported_extension.
+SUPPORTED_EXTENSIONS = frozenset(FILE_STRATEGIES)
+
 # Build CODE_EXTENSIONS set from config
 def _build_code_extensions() -> Set[str]:
     """Get code extensions from config."""
@@ -1232,6 +1236,23 @@ def get_file_strategy_name(file_extension: str) -> str:
     if entry:
         return entry[0]
     return 'text'
+
+
+def is_supported_extension(file_extension: str) -> bool:
+    """True if config.json configures a strategy for this extension.
+
+    Anything else falls through get_file_strategy to PlainTextStrategy, which
+    rewrites the whole file with no structural awareness. That is the right
+    default for stdin, where the caller names '.txt' deliberately and there is
+    no filename to reason from, and the wrong one for a file on disk, where the
+    extension is the only signal about structure: a .pyi, .lua, .yaml or .tf
+    file handled as plain text has its identifiers and keys rewritten.
+
+    So callers processing real files must ask this first rather than relying on
+    the fallback. The hook has always gated on the same set, built from the same
+    config; this is what lets the CLI agree with it.
+    """
+    return file_extension.lower() in FILE_STRATEGIES
 
 
 def is_code_file(file_extension: str) -> bool:
