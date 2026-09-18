@@ -672,3 +672,23 @@ def test_only_the_first_docstring_line_is_scanned_when_lines_end_with_cr(words):
     source = 'def f(**kwargs):\r    """color: Enable it.\rcenter: Enable it.\r    """\r'
     assert PythonStrategy('defined').process(source, words)[0] == source.replace(
         'center:', 'centre:')
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_labels_are_read_from_the_source_not_the_decoded_value(words, mode):
+    # The escape is two characters where it stands, so "center" does not begin
+    # a line and documents nothing. Reading the decoded docstring value would
+    # make it a label and protect it across the file.
+    source = ('def f(**kwargs):\n    """Args:\n        color: x.\\n        center: y."""\n'
+              '# The center was organized.\n')
+    expected = source.replace('center', 'centre').replace('organized', 'organised')
+    assert PythonStrategy(mode).process(source, words)[0] == expected
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_cr_only_docstring_documents_nothing_beyond_its_first_line(words, mode):
+    # The parser normalises these endings, so the decoded value has a section
+    # with two labels in it while the source has one line and none.
+    source = 'def f(**kwargs):\r    """Args:\r        color: x.\r        center: y.\r    """\r'
+    expected = source.replace('color:', 'colour:').replace('center:', 'centre:')
+    assert PythonStrategy(mode).process(source, words)[0] == expected

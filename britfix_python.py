@@ -201,16 +201,6 @@ def _parameter_labels(prose):
     return labels
 
 
-def _parameter_label_spans(prose):
-    """Spans of Google, Sphinx and NumPy parameter labels, descriptions excluded."""
-    return [span for span, _ in _parameter_labels(prose)]
-
-
-def _parameter_label_names(prose):
-    """Identifier names that a docstring documents as parameters."""
-    return {name for _, name in _parameter_labels(prose) if name.isidentifier()}
-
-
 class PythonStrategy:
     supports_interactive = True
 
@@ -275,20 +265,8 @@ class PythonStrategy:
                 elif node.name != '*':
                     defined.add(node.name.split('.')[0])
 
-        doc_ids = {id(node) for node in docs}
-        if mode == 'all':
-            names = {token.string for token in tokens if token.type == tokenize.NAME}
-        else:
-            names = defined
-        names.update(node.value for node in constants
-                     if id(node) not in doc_ids and node.value.isidentifier())
-        # A name a docstring documents as a parameter names code just as a name
-        # the file defines does, so it protects its prose mentions file-wide
-        # rather than only inside the docstring that documents it.
-        for doc in docs:
-            names.update(_parameter_label_names(doc.value))
-
         regions = []
+        documented = []
         try:
             for token in tokens:
                 if token.type == tokenize.COMMENT:
@@ -297,7 +275,7 @@ class PythonStrategy:
                         raise _inconsistent(f'comment at row {token.start[0]}')
                     if start == 0 and token.string.startswith('#!'):
                         continue
-                    regions.append((start, end, False))
+                    regions.append((start, end, False, _parameter_labels(content[start:end])))
             string_starts = sorted(token_offset(t.start) for t in tokens if t.type == tokenize.STRING)
             for doc in docs:
                 start = ast_offset(doc.lineno, doc.col_offset)
@@ -317,19 +295,38 @@ class PythonStrategy:
                     continue
                 delimiter = match.group(2)
                 escapes = (match.group(1) or '').lower() != 'r'
-                regions.append((start + match.end(), end - len(delimiter), escapes))
+                doc_start, doc_end = start + match.end(), end - len(delimiter)
+                documented.append(len(regions))
+                regions.append((doc_start, doc_end, escapes,
+                                _parameter_labels(content[doc_start:doc_end])))
         except (IndexError, UnicodeDecodeError) as exc:
             raise _inconsistent(str(exc)) from exc
 
+        doc_ids = {id(node) for node in docs}
+        if mode == 'all':
+            names = {token.string for token in tokens if token.type == tokenize.NAME}
+        else:
+            names = defined
+        names.update(node.value for node in constants
+                     if id(node) not in doc_ids and node.value.isidentifier())
+        # A name a docstring documents as a parameter names code just as a name
+        # the file defines does, so it protects its prose mentions file-wide
+        # rather than only inside the docstring that documents it. The labels
+        # come from the region text the corrections are read from, never from
+        # the decoded value, so the names protected and the spans preserved
+        # cannot disagree about where a line begins.
+        for index in documented:
+            names.update(name for _, name in regions[index][3] if name.isidentifier())
+
         replacements = []
-        for start, end, escapes in regions:
+        for start, end, escapes, labels in regions:
             prose = content[start:end]
             protected = quotation_spans(prose, True) + url_spans(prose)
             protected += [m.span() for m in re.finditer(r'`+[^`]*`+|\b\w+(?:\.\w+)+\b|\\(?:\r?\n|.)', prose)]
             if escapes:
                 # A named escape such as \N{...} is part of the string's value, not prose.
                 protected += [m.span() for m in re.finditer(r'\\N\{[^}]*\}', prose)]
-            protected += _parameter_label_spans(prose)
+            protected += [span for span, _ in labels]
             protected = merge_spans(protected)
             for a, b, old, new in corrector.find_replacements(prose):
                 if old in names or any(x < b and a < y for x, y in protected):

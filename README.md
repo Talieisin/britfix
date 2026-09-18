@@ -287,7 +287,7 @@ Docstring parameter labels are preserved, and only the label: the description be
 
 A name recognised as a parameter label is protected file-wide: it is left alone everywhere else in that file's comments and docstrings, not only in the docstring that documents it, so a description such as `Alias for color` keeps the name it refers to. Only labels that a section documents count here, that is a Google label inside a section block, a Sphinx info field, or a NumPy name line; a sentence that merely begins with a word and a colon is still protected where it stands but records no name. Matching is case-sensitive, as it is for identifiers, so documenting `Color:` does not protect `color`.
 
-Labels are matched per line, and a bare carriage return does not start a line, so in a file whose only line ending is `\r` only the first line of each docstring is scanned for them.
+Labels are matched per line in the docstring as it is written, not in its decoded value, so an escape such as `\n` inside a docstring does not begin a label line. A bare carriage return does not start a line either, so in a file whose only line ending is `\r` only the first line of each docstring is scanned for labels.
 
 Words that name a Python identifier are also left alone in comments and docstrings. Matching is file-local and case-sensitive, and is controlled by `strategies.code.python_identifier_protection` in `config.json`:
 
