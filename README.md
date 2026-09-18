@@ -294,6 +294,78 @@ The `britfix_hook.py` script integrates with tools that support hooks to automat
 }
 ```
 
+### What the hook reports
+
+A rewrite is visible rather than silent. When the hook changes a file it returns
+the change in its JSON output: a one-line `systemMessage` for you, and a one-line
+`hookSpecificOutput.additionalContext` for the model that made the edit, so
+neither has to discover the rewrite by reading the diff afterwards.
+
+```
+britfix rewrote 2 spellings in /path/to/notes.md: L12 color->colour, L40 center->centre
+```
+
+The report names the file, the true number of changes and the line number of
+each, so you can go straight to what moved. The path is the one the tool was
+given, shortened only if it runs past 300 characters. At most five changes are
+listed, then `+N more`.
+
+The note to the model says the rewrite is deliberate and must not be reverted,
+and points at [`.britfixignore`](#ignoring-words-britfixignore) for the case
+where a token has to keep its US spelling. Without that, the model's natural
+response is to put the spelling back, and the two loop.
+
+A file the hook did not change produces no output at all, which keeps the hook
+quiet on the great majority of edits. A `britfix: skipped` diagnostic is
+reported to the model, since it explains why spellings in that file are
+unchanged. A failure of the corrector itself, including a timeout, produces one
+line to you. So does a rejected `.britfixignore` entry, because an entry that
+the CLI will not accept exempts nothing and the correction simply returns; a
+phrase must be quoted, and a token containing a colon, such as `"w:color"`, is
+read as a strategy scope unless it is quoted.
+
+The count comes from comparing the file before and after the run, not from the
+CLI's own summary. That summary prints each word twice, once per file and once
+in the totals, so reading it reported double the real number.
+
+Because those two reads straddle the corrector, another writer can change the
+file inside that window. When the difference is not a word-for-word substitution
+between two words, the hook does not attribute it to britfix: it reports that
+the file differs from what was written, without a count and without claiming the
+change was a correction. A word here means letters and hyphens. No mapping in
+the dictionary needs the hyphen today, since every entry rewrites one word into
+another, but the check discards the whole file's report rather than one entry,
+so a mapping that moved or dropped a hyphen would let one unrecognised pair
+take nine perfectly explainable corrections down with it. A line that was added
+to or deleted from is treated the same way, since britfix substitutes words in place
+and never inserts or removes one.
+
+Shape alone cannot tell a correction from another writer swapping one word for
+another, so the hook also asks whether at least one changed word is one the
+dictionary knows how to rewrite. A britfix run always contains one; an edit by
+something else contains none. One recognised word is enough to believe the
+file, which keeps a correction the dictionary cannot express from discarding
+the report around it. What this does not catch: someone editing a word britfix
+knows, by hand, inside that same window. The report would then be wrong about
+who made the change and right about what it was, and separating the two would
+take the corrector's own account of what it decided.
+
+The report describes effects rather than decisions, so it cannot say whether a
+correction landed in prose, a comment or a machine-readable token; only the line
+number tells you where to look. Establishing that would take the corrector's own
+account of what it decided, which the CLI does not yet emit.
+
+Summarising is also bounded: comparing a line is quadratic in its length, so a
+file whose changed lines are very long (a minified asset, or a one-line JSON or
+CSS blob) is reported as changed without detail rather than holding the session
+up. An ordinary unwrapped paragraph is far inside the bound.
+
+The hook never blocks an edit. It always exits 0 and always prints one JSON
+object, including when the corrector fails, times out, or the file is deleted
+between the edit and the hook. Only regular files are read, so a named pipe
+cannot stall it. It reports what changed; it cannot undo or prevent anything,
+because the write has already happened by the time it runs.
+
 ### Debugging
 
 Enable logging by uncommenting in `run-hook.sh`:
@@ -302,6 +374,12 @@ export BRITFIX_LOG=/tmp/britfix.log
 ```
 
 Then watch: `tail -f /tmp/britfix.log`
+
+Logging is off by default. Since the report is now surfaced in the session
+itself, the log is for auditing across sessions rather than for seeing what the
+hook did. The hook's stderr is not a substitute: a hook that exits 0 has its
+stderr sent to the debug log only, so it reaches neither the transcript nor the
+model.
 
 ### Python and file preservation
 
