@@ -95,7 +95,36 @@ For code files, the tool intelligently handles context:
 config.get('organization')      # String literal - unchanged
 payload = {'colorScheme': x}    # Dict key - unchanged  
 # Use 'colorField' for the API  # Quoted in comment - unchanged
+# See xref.finalize for details  # Dotted name in comment - unchanged
+# Use `colorField` here          # Backtick span in comment - unchanged
 ```
+
+Inside a comment or docstring, a dotted name such as `xref.finalize` and a
+backtick code span are left alone, so a comment cannot end up naming an API
+that does not exist (issue #63). This applies to every code extension and to
+stylesheet comments (`.css`, `.scss`, `.sass`, `.less`).
+
+A dotted name is protected exactly as it is in a `.py` file, and so is an
+ordinary backtick span. A span opened with two backticks closes on the next
+pair, so a double-backtick span survives whole. Two backtick cases are stricter
+here than in `.py`: a double-backtick span that encloses single backticks is
+preserved whole (in `.py` its inner text is still corrected), and an unclosed
+run preserves the rest of that one comment (in `.py` correction carries on).
+
+A decimal number such as `1.5` has the same shape as a dotted name and is
+preserved too, which costs nothing. Two things are deliberately not protected: a
+URL, so the path of a URL written in a comment can still be corrected, and a full
+stop with no space after it, so `color.Then` reads as a dotted name and neither
+word is corrected.
+
+A quoted phrase from `.britfixignore` wins over both the dotted-name split and
+the backtick pairing, including a phrase that contains a dot. Two limits apply to
+phrases inside comments, both of which predate this protection. A phrase
+containing an apostrophe, a straight double quote or a backtick is split by the
+comment scanner before it can be matched, so its words can still be converted:
+with `"don't change color"` configured, `// don't change color here` still
+becomes `// don't change colour here`. And where two configured phrases overlap,
+only the longer one is honoured.
 
 ## Ignoring Words (`.britfixignore`)
 
