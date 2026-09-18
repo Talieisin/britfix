@@ -276,7 +276,16 @@ Then watch: `tail -f /tmp/britfix.log`
 
 ### Python and file preservation
 
-Python files use tokenisation and AST docstring identification while retaining the `code:` ignore namespace. Non-docstring string literals, executable tokens, shebangs and technical references (backticks, dotted names such as `xref.finalize`, URLs, quotations and docstring parameter labels) remain unchanged. Other source languages retain their existing strategy.
+Python files use tokenisation and AST docstring identification while retaining the `code:` ignore namespace. Non-docstring string literals, executable tokens, shebangs and technical references (backticks, dotted names such as `xref.finalize`, URLs and quotations) remain unchanged. Tokenisation and AST analysis, the file-local identifier set, docstring parameter labels and failing closed on unparseable source are specific to Python; see [Code File Handling](#code-file-handling) for the protections that apply to source files generally.
+
+Docstring parameter labels are preserved, and only the label: the description beside it is still corrected, so documented prose does not stop being processed. The forms recognised are:
+
+- Google style at the start of a line, with or without a type: `color:`, `color : bool`, `color (bool):`, `color (bool, optional):`, `*args (tuple):` and `**kwargs (dict):`. The name and the parenthesised type are preserved; the description after the colon is not. A line whose first word is followed by a space rather than a colon is ordinary prose, so `See also: the color table` is still corrected.
+- Sphinx info fields that carry a name: `:param`, `:parameter`, `:arg`, `:argument`, `:key`, `:keyword`, `:kwarg`, `:var`, `:ivar`, `:cvar`, `:raises`, `:raise`, `:except` and `:exception`. The field name and the name it carries are preserved, so `:raises ValueError: bad color` keeps the class name and still corrects the description. `:returns:` and any unrecognised field are ordinary prose.
+- `:type`, `:vartype` and `:rtype` preserve the whole line, because their payload is a type expression rather than a description.
+- NumPy name lines inside a section whose heading carries a dashed underline (`Parameters`, `Other Parameters`, `Attributes`, `Returns`, `Yields`, `Raises`, `Receives`, `Warns`). A line at the heading's own indent that is wholly names, optionally starred and optionally followed by ` : type`, is preserved; the indented description below it is still corrected. A heading without an underline, or one outside that list such as `Notes`, is ordinary prose.
+
+Labels are matched per line, so a file whose only line ending is a bare carriage return is not scanned for them.
 
 Words that name a Python identifier are also left alone in comments and docstrings. Matching is file-local and case-sensitive, and is controlled by `strategies.code.python_identifier_protection` in `config.json`:
 
