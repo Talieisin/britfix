@@ -112,6 +112,68 @@ class TestPractiseFamily:
         assert len(changes) == 0
 
 
+class TestAnalyseFamily:
+    """The agent noun 'analyzer' belongs in the dictionary and must stay.
+
+    The rest of the family (analyze, analyzed, analyzes, analyzing) was always
+    here, but the agent noun was missing, so 'analyzer' passed through silently
+    while 'analyser' is the British form. Nobody had decided to leave it alone;
+    it was simply absent. That made the dictionary inconsistent rather than
+    merely incomplete, because the same -yzer agent noun shape is already
+    mapped: 'breathalyzer' and 'breathalyzers' are both here, as are
+    'organizer' and 'organizers'.
+
+    This is not the start of a sweep. There are 250 keys ending in 'ize' or
+    'yze', and deriving agent nouns from all of them would add 465 entries such
+    as 'Africanizer', 'allegorizer' and 'accessorizer', words nobody writes.
+    Four rounds of pruning have removed entries that were not genuine live
+    pairs, most recently PR #74. 'analyzer' is here because it is a real and
+    common word in technical prose, not because a rule generates it.
+    """
+
+    FAMILY = [
+        ("analyze", "analyse"),
+        ("analyzed", "analysed"),
+        ("analyzer", "analyser"),
+        ("analyzers", "analysers"),
+        ("analyzes", "analyses"),
+        ("analyzing", "analysing"),
+    ]
+
+    def test_analyzer_converts(self, corrector):
+        text = "The analyzer flagged it."
+        result, changes = corrector.correct_text(text)
+        assert result == "The analyser flagged it."
+        assert "analyzer" in changes
+
+    def test_analyzers_converts(self, corrector):
+        text = "Two analyzers ran overnight."
+        result, changes = corrector.correct_text(text)
+        assert result == "Two analysers ran overnight."
+        assert "analyzers" in changes
+
+    def test_case_preserved(self, corrector):
+        text = "Analyzer and ANALYZER"
+        result, _ = corrector.correct_text(text)
+        assert result == "Analyser and ANALYSER"
+
+    def test_british_forms_unchanged(self, corrector):
+        text = "The analyser and its analysers."
+        result, changes = corrector.correct_text(text)
+        assert result == text
+        assert len(changes) == 0
+
+    @pytest.mark.parametrize("word,expected", FAMILY)
+    def test_family_is_complete(self, corrector, word, expected):
+        assert corrector.dictionary.get(word) == expected, (
+            f"'{word}' -> '{expected}' is missing from the dictionary. "
+            "Do not delete it. The agent nouns 'analyzer' and 'analyzers' are "
+            "not redundant with the verb forms: without them the word passes "
+            "through uncorrected, and the family stops matching 'breathalyzer' "
+            "and 'organizer', which are both mapped. Put it back."
+        )
+
+
 class TestRemovedMappings:
     """Mappings deliberately removed from the dictionary must stay removed.
 
