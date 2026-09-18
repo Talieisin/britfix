@@ -338,11 +338,16 @@ def build_hook_output(file_path: str, summary: dict, error: str, skipped_notes: 
     user_parts = []
     model_parts = []
 
+    # Bound the variable-length parts here rather than truncating the finished
+    # sentence, so an unusually long path can never cut off the tail of the
+    # message to the model, which is where "must not be reverted" lives.
+    file_path = truncate(str(file_path), 300)
+
     if summary.get('changed'):
         if summary.get('detailed'):
             count = summary['total']
             noun = 'spelling' if count == 1 else 'spellings'
-            detail = format_change_list(summary['items'])
+            detail = truncate(format_change_list(summary['items']), 400)
             user_parts.append(f"britfix rewrote {count} {noun} in {file_path}: {detail}")
             model_parts.append(
                 f"The britfix PostToolUse hook rewrote {count} US {noun} in {file_path} "

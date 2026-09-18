@@ -448,3 +448,14 @@ def test_main_does_not_echo_the_input_payload(monkeypatch, capsys, md_file):
     code, out = _drive_main(monkeypatch, capsys, payload)
     assert code == 0
     assert out == {}
+
+
+def test_output_keeps_the_revert_instruction_whatever_the_path_length():
+    # The instruction not to revert is the part that stops a hook/model loop,
+    # so it must survive a pathological path rather than being truncated away.
+    long_path = '/repo/' + ('deep/' * 400) + 'notes.md'
+    out = h.build_hook_output(long_path, _changed(), '', [])
+    ctx = out['hookSpecificOutput']['additionalContext']
+    assert len(ctx) <= h.MAX_MESSAGE_CHARS
+    assert 'must not be reverted' in ctx
+    assert '.britfixignore' in ctx
