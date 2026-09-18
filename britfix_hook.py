@@ -296,6 +296,15 @@ def summarise_changes(before, after) -> dict:
         # difference. Real, but not a spelling report.
         return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
 
+    if any(not (old.isalpha() and new.isalpha()) for _, old, new in items):
+        # A spelling correction always replaces one alphabetic word with
+        # another. Anything else means the file changed in a way britfix cannot
+        # account for, most likely because something else wrote to it during the
+        # run. The before-read and the after-read straddle the corrector, so that
+        # window exists. Say less rather than attributing a foreign edit to
+        # britfix and naming words it never touched.
+        return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+
     return {'changed': True, 'detailed': True, 'total': len(items), 'items': items}
 
 
@@ -357,12 +366,15 @@ def build_hook_output(file_path: str, summary: dict, error: str, skipped_notes: 
                 f"repository root as a quoted phrase, such as \"w:color\"."
             )
         else:
-            user_parts.append(f"britfix changed {file_path} (details unavailable)")
+            # Deliberately weaker wording. Here the hook knows the file changed
+            # but not that britfix is what changed it, so it claims neither.
+            user_parts.append(
+                f"{file_path} changed after the edit; britfix could not summarise the change")
             model_parts.append(
-                f"The britfix PostToolUse hook changed {file_path} after this edit, so the file "
-                f"on disk now differs from the text that was written. The change is deliberate "
-                f"and must not be reverted; to exempt a token, add it to .britfixignore at the "
-                f"repository root as a quoted phrase."
+                f"The file {file_path} on disk differs from the text that was written. The "
+                f"britfix PostToolUse hook ran on it but could not summarise the difference, so "
+                f"which part of it is a spelling correction is not established. Re-read the file "
+                f"before editing it further."
             )
 
     if skipped_notes:

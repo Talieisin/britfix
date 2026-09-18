@@ -295,6 +295,14 @@ The count comes from comparing the file before and after the run, not from the
 CLI's own summary. That summary prints each word twice, once per file and once
 in the totals, so reading it reported double the real number.
 
+Because those two reads straddle the corrector, another writer can change the
+file inside that window. When the difference is not a word-for-word substitution
+between two alphabetic words, the hook does not attribute it to britfix: it
+reports that the file differs from what was written, without a count and without
+claiming the change was a correction. It reports effects rather than decisions,
+so it cannot say whether a correction landed in prose, a comment or a
+machine-readable token; only the line number tells you where to look.
+
 The hook never blocks an edit. It always exits 0 and always prints one JSON
 object, including when the corrector fails, times out, or the file is deleted
 between the edit and the hook. It reports what changed; it cannot undo or

@@ -459,3 +459,33 @@ def test_output_keeps_the_revert_instruction_whatever_the_path_length():
     assert len(ctx) <= h.MAX_MESSAGE_CHARS
     assert 'must not be reverted' in ctx
     assert '.britfixignore' in ctx
+
+
+def test_summarise_refuses_to_explain_a_diff_that_is_not_a_spelling_change():
+    # The before-read and the after-read straddle the corrector, so another
+    # writer can land inside that window. A structural edit is not a spelling
+    # correction, and attributing it to britfix would be a confident lie.
+    s = h.summarise_changes(_b("the color is nice"), _b("the color is nice  # added by someone"))
+    assert s['changed'] is True
+    assert s['detailed'] is False
+    assert s['items'] == []
+
+
+def test_summarise_still_explains_a_correction_inside_a_machine_token():
+    # The guard above must not suppress the case issue #63 is about: a
+    # correction landing inside an OOXML attribute is still word-for-word.
+    s = h.summarise_changes(_b('w:color="auto"'), _b('w:colour="auto"'))
+    assert s['detailed'] is True
+    assert s['items'] == [(1, 'color', 'colour')]
+
+
+def test_output_does_not_claim_britfix_made_an_unexplained_change():
+    # Saying less beats saying something false: with no word-level explanation,
+    # the message asserts that the file differs, not who changed it, and gives
+    # no revert instruction it cannot justify.
+    summary = {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+    out = h.build_hook_output('/repo/notes.md', summary, '', [])
+    assert 'britfix rewrote' not in out['systemMessage']
+    ctx = out['hookSpecificOutput']['additionalContext']
+    assert 'must not be reverted' not in ctx
+    assert 'Re-read the file' in ctx
