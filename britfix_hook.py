@@ -8,6 +8,7 @@ import sys
 import os
 import subprocess
 import re
+import difflib
 from pathlib import Path
 from datetime import datetime
 
@@ -168,14 +169,20 @@ def read_hook_input(stream=sys.stdin) -> dict:
             continue
 
 
-def run_britfix(file_path: str) -> tuple[bool, str]:
+def run_britfix(file_path: str) -> tuple[bool, str, list]:
     """
     Run britfix on a file.
-    Returns (success, output_message).
+    Returns (success, error_message, skipped_notes).
+
+    What changed is NOT read from the CLI's stdout. That stdout prints each word
+    twice, once in the per-file block and once in the totals block, so the old
+    regex over the whole output reported double the real count. It is also prose
+    written for humans, so any rewording of it silently changes the hook's
+    report. The caller diffs the file itself instead — see summarise_changes.
     """
-    cmd = ['uv', 'run', '--directory', str(HOOK_DIR), 
+    cmd = ['uv', 'run', '--directory', str(HOOK_DIR),
            'python', 'britfix.py', '--input', file_path, '--no-backup']
-    
+
     try:
         result = subprocess.run(
             cmd,
@@ -184,89 +191,274 @@ def run_britfix(file_path: str) -> tuple[bool, str]:
             timeout=10,
             cwd=HOOK_DIR
         )
-        
+
+        skipped = []
         for line in result.stderr.splitlines():
             if line.startswith('britfix: skipped '):
                 log(line)
+                skipped.append(line)
         if result.returncode == 0:
-            # Check stdout for change info (not stderr!)
-            output = result.stdout
-            if 'occurrence(s)' in output:
-                # Extract changes
-                changes = re.findall(r'(\w+) -> (\w+): (\d+) occurrence', output)
-                if changes:
-                    total = sum(int(c) for _, _, c in changes)
-                    details = ', '.join(f"{a}->{b}" for a, b, _ in changes)
-                    return True, f"Fixed {total}: {details}"
-            return True, ""
-        else:
-            return False, result.stderr.strip() or result.stdout.strip()
-            
+            return True, "", skipped
+        return False, (result.stderr.strip() or result.stdout.strip()), skipped
+
     except subprocess.TimeoutExpired:
-        return False, "Timeout"
+        return False, "Timeout", []
     except FileNotFoundError:
-        return False, "uv not found"
+        return False, "uv not found", []
     except Exception as e:
-        return False, str(e)
+        return False, str(e), []
+
+
+# --- Change reporting ------------------------------------------------------
+#
+# A rewrite must be visible. Hook stderr on exit 0 reaches only the debug log
+# (never the transcript, and never Claude), so the report is carried by the
+# documented PostToolUse JSON output instead: top-level `systemMessage` for the
+# user, `hookSpecificOutput.additionalContext` for the model that made the edit.
+# Both are emitted only when the file's bytes actually changed, so an ordinary
+# edit that needed no correction stays silent.
+
+# How many individual word changes to name before summarising the rest.
+MAX_REPORTED_CHANGES = 5
+
+# Defensive ceiling per emitted string. Claude Code caps hook output strings at
+# 10,000 characters and replaces anything longer with a preview plus a file
+# path, which would stop the JSON parsing; stay far below that.
+MAX_MESSAGE_CHARS = 1500
+
+# Letters / digits / underscores / everything else, so a substitution pairs up
+# word-for-word rather than smearing across the punctuation around it.
+_TOKEN_RE = re.compile(r"[^\W\d_]+|\W+|\d+|_+", re.UNICODE)
+
+
+def read_file_bytes(path: str):
+    """Read a file as bytes, or None if it cannot be read.
+
+    None means 'cannot tell', never 'empty': the file may have been deleted or
+    replaced between the edit and the hook, and that must not raise."""
+    try:
+        with open(path, 'rb') as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def pair_line_changes(before_line: str, after_line: str) -> list:
+    """Pair up the words a single line replaced: [(before, after), ...]."""
+    before_tokens = _TOKEN_RE.findall(before_line)
+    after_tokens = _TOKEN_RE.findall(after_line)
+    pairs = []
+    matcher = difflib.SequenceMatcher(None, before_tokens, after_tokens, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != 'replace':
+            continue
+        if (i2 - i1) == (j2 - j1):
+            for offset in range(i2 - i1):
+                pairs.append((before_tokens[i1 + offset], after_tokens[j1 + offset]))
+        else:
+            # Uneven replacement: report the whole span rather than mispair it.
+            pairs.append((''.join(before_tokens[i1:i2]), ''.join(after_tokens[j1:j2])))
+    return pairs
+
+
+def summarise_changes(before, after) -> dict:
+    """Describe what britfix did to a file, from the file itself.
+
+    Returns {'changed': bool, 'detailed': bool, 'total': int, 'items': [...]},
+    where items are (line_number, before_word, after_word) triples.
+
+    'detailed' is False when the change is real but cannot be described safely
+    (unreadable file, or a differing line count, which an in-place word
+    substitution never produces and a truncated write does). The report then
+    says a change happened without inventing a count."""
+    empty = {'changed': False, 'detailed': False, 'total': 0, 'items': []}
+    if before is None or after is None or before == after:
+        return empty
+
+    try:
+        before_lines = before.decode('utf-8', errors='replace').splitlines()
+        after_lines = after.decode('utf-8', errors='replace').splitlines()
+    except Exception:
+        return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+
+    if len(before_lines) != len(after_lines):
+        return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+
+    items = []
+    for index, (before_line, after_line) in enumerate(zip(before_lines, after_lines), start=1):
+        if before_line == after_line:
+            continue
+        for old, new in pair_line_changes(before_line, after_line):
+            items.append((index, old, new))
+
+    if not items:
+        # Bytes differ but no line-level word change: a BOM or line-ending
+        # difference. Real, but not a spelling report.
+        return {'changed': True, 'detailed': False, 'total': 0, 'items': []}
+
+    return {'changed': True, 'detailed': True, 'total': len(items), 'items': items}
+
+
+def format_change_list(items: list, limit: int = MAX_REPORTED_CHANGES) -> str:
+    """Render change triples as 'L12 color->colour, L40 center->centre, +3 more'."""
+    shown = [f"L{line} {old}->{new}" for line, old, new in items[:limit]]
+    remainder = len(items) - len(shown)
+    if remainder > 0:
+        shown.append(f"+{remainder} more")
+    return ', '.join(shown)
+
+
+def describe_skips(skipped_notes: list) -> str:
+    """One short clause naming why britfix declined to correct part of a file."""
+    reasons = []
+    for note in skipped_notes:
+        detail = note[len('britfix: skipped '):].strip()
+        try:
+            parsed = json.loads(detail)
+            reason = parsed.get('reason', '') or detail
+            region = parsed.get('region', '')
+            reasons.append(f"{region}: {reason}" if region else str(reason))
+        except (ValueError, AttributeError):
+            reasons.append(detail)
+    unique = []
+    for reason in reasons:
+        if reason not in unique:
+            unique.append(reason)
+    return '; '.join(unique[:MAX_REPORTED_CHANGES])
+
+
+def truncate(text: str, limit: int = MAX_MESSAGE_CHARS) -> str:
+    return text if len(text) <= limit else text[:limit - 3] + '...'
+
+
+def build_hook_output(file_path: str, summary: dict, error: str, skipped_notes: list) -> dict:
+    """Build the PostToolUse JSON output describing what happened to file_path.
+
+    Returns {} when there is nothing worth saying, which is the common case."""
+    user_parts = []
+    model_parts = []
+
+    if summary.get('changed'):
+        if summary.get('detailed'):
+            count = summary['total']
+            noun = 'spelling' if count == 1 else 'spellings'
+            detail = format_change_list(summary['items'])
+            user_parts.append(f"britfix rewrote {count} {noun} in {file_path}: {detail}")
+            model_parts.append(
+                f"The britfix PostToolUse hook rewrote {count} US {noun} in {file_path} "
+                f"after this edit ({detail}), so the file on disk now differs from the text "
+                f"that was written. This rewrite is deliberate and must not be reverted; if a "
+                f"rewritten token has to keep its US spelling, add it to .britfixignore at the "
+                f"repository root as a quoted phrase, such as \"w:color\"."
+            )
+        else:
+            user_parts.append(f"britfix changed {file_path} (details unavailable)")
+            model_parts.append(
+                f"The britfix PostToolUse hook changed {file_path} after this edit, so the file "
+                f"on disk now differs from the text that was written. The change is deliberate "
+                f"and must not be reverted; to exempt a token, add it to .britfixignore at the "
+                f"repository root as a quoted phrase."
+            )
+
+    if skipped_notes:
+        # Worth telling the model even when nothing changed: it explains why the
+        # US spellings it wrote are still there.
+        model_parts.append(
+            f"britfix skipped correcting part or all of {file_path} "
+            f"({describe_skips(skipped_notes)}), so spellings there are unchanged."
+        )
+
+    if error:
+        user_parts.append(f"britfix hook failed on {file_path}: {error}")
+
+    output = {}
+    if user_parts:
+        output['systemMessage'] = truncate('; '.join(user_parts))
+    if model_parts:
+        output['hookSpecificOutput'] = {
+            'hookEventName': 'PostToolUse',
+            'additionalContext': truncate(' '.join(model_parts)),
+        }
+    return output
 
 
 def process_posttooluse(hook_input: dict) -> dict:
-    """Process PostToolUse hook - fixes spelling in files after they're written."""
+    """Process PostToolUse hook - fixes spelling in files after they're written.
+
+    Returns the hook's JSON output: {} when there is nothing to report."""
     tool_name = hook_input.get('tool_name', '')
     tool_input = hook_input.get('tool_input', {})
-    
+
     if tool_name not in ['Write', 'Edit', 'MultiEdit']:
-        return hook_input
-    
+        return {}
+
     file_path = tool_input.get('file_path', '')
     if not file_path or not os.path.exists(file_path):
-        return hook_input
+        return {}
 
     # Skip excluded paths entirely (verbatim-content protection — see path_is_excluded)
     if path_is_excluded(file_path, EXCLUDE_PATHS):
-        return hook_input
+        return {}
 
     # Check file extension
     ext = Path(file_path).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
-        return hook_input
-    
+        return {}
+
     # Skip files in the britfix directory itself to avoid recursion
     try:
         if HOOK_DIR in Path(file_path).resolve().parents or Path(file_path).resolve().parent == HOOK_DIR:
-            return hook_input
+            return {}
     except:
         pass
-    
-    success, message = run_britfix(file_path)
-    
-    if message:
+
+    # Read before and after so the report describes what actually happened to
+    # the bytes on disk, independently of anything the CLI prints.
+    before = read_file_bytes(file_path)
+    success, error, skipped_notes = run_britfix(file_path)
+    after = read_file_bytes(file_path)
+
+    # Reporting must never be able to fail an edit: degrade to no report.
+    try:
+        summary = summarise_changes(before, after)
+        output = build_hook_output(file_path, summary, '' if success else error, skipped_notes)
+    except Exception as e:
+        log(f"[Britfix Error] Could not summarise changes for {file_path}: {e}")
+        return {}
+
+    if 'systemMessage' in output:
         prefix = "[Britfix]" if success else "[Britfix Error]"
-        log(f"{prefix} {Path(file_path).name}: {message}")
-    
-    return hook_input
+        log(f"{prefix} {output['systemMessage']}")
+
+    return output
 
 
 def main():
-    hook_input = {}
+    """Always print one JSON object and always exit 0.
+
+    Stdout carries only the hook's own output fields. It deliberately no longer
+    echoes the input payload back: the documented contract is that stdout
+    "must contain only the JSON object", and an echoed payload includes
+    tool_input.content, which for a large Write pushes stdout past the 10,000
+    character output cap. Past that cap the text is replaced by a preview and a
+    file path, which is not parseable JSON, so the echo destroyed the very
+    report it was carrying on exactly the largest files."""
     try:
         hook_input = read_hook_input()
         hook_event = hook_input.get('hook_event_name', '')
-        
-        if hook_event == 'PostToolUse':
-            result = process_posttooluse(hook_input)
-        else:
-            result = hook_input
-        
-        print(json.dumps(result))
+
+        result = process_posttooluse(hook_input) if hook_event == 'PostToolUse' else {}
+
+        try:
+            payload = json.dumps(result)
+        except Exception:
+            payload = "{}"
+        print(payload)
         return 0
-        
+
     except Exception as e:
         log(f"[Spell Hook] Fatal error: {e}")
-        try:
-            print(json.dumps(hook_input if hook_input else {}))
-        except:
-            print("{}")
+        print("{}")
         return 0
 
 

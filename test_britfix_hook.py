@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for britfix_hook — exclude_paths validation and path-based skipping."""
+"""Tests for britfix_hook — exclude_paths validation, path-based skipping and
+the change report the hook surfaces after a rewrite."""
 import json
+import os
+import subprocess
+import unittest.mock as mock
 import pytest
 import britfix_hook as h
 
@@ -75,7 +79,7 @@ def md_file(tmp_path):
 def test_process_skips_excluded(monkeypatch, md_file):
     """An excluded file must short-circuit before britfix runs."""
     calls = []
-    monkeypatch.setattr(h, "run_britfix", lambda fp: (calls.append(fp), (True, ""))[1])
+    monkeypatch.setattr(h, "run_britfix", lambda fp: (calls.append(fp), (True, "", []))[1])
     monkeypatch.setattr(h, "EXCLUDE_PATHS", ["note.md"])
     monkeypatch.setattr(h, "SUPPORTED_EXTENSIONS", {".md"})
     h.process_posttooluse(_payload(md_file))
@@ -85,7 +89,7 @@ def test_process_skips_excluded(monkeypatch, md_file):
 def test_process_runs_when_not_excluded(monkeypatch, md_file):
     """A supported, non-excluded file must be processed normally."""
     calls = []
-    monkeypatch.setattr(h, "run_britfix", lambda fp: (calls.append(fp), (True, ""))[1])
+    monkeypatch.setattr(h, "run_britfix", lambda fp: (calls.append(fp), (True, "", []))[1])
     monkeypatch.setattr(h, "EXCLUDE_PATHS", ["/nonexistent-fragment-xyz/"])
     monkeypatch.setattr(h, "SUPPORTED_EXTENSIONS", {".md"})
     h.process_posttooluse(_payload(md_file))
@@ -155,3 +159,292 @@ def test_merge_local_strategies_override_is_fatal(tmp_path):
 def test_merge_local_entries_are_validated(tmp_path):
     with pytest.raises(SystemExit):
         h.merge_local_config(_base_config(), _local(tmp_path, {"exclude_paths": [""]}))
+
+
+# --- summarise_changes (the report is derived from the file, not the CLI) ---
+
+def _b(text):
+    return text.encode('utf-8')
+
+
+def test_summarise_counts_one_occurrence_once():
+    # Regression for the doubled count. The CLI prints every word twice, once in
+    # the per-file block and once in the totals block, so the old regex over its
+    # whole stdout reported 'Fixed 2' for a single correction. Counting the file
+    # itself cannot double.
+    s = h.summarise_changes(_b("the color is nice"), _b("the colour is nice"))
+    assert s['total'] == 1
+    assert s['items'] == [(1, 'color', 'colour')]
+
+
+def test_summarise_pairs_several_words_on_one_line():
+    s = h.summarise_changes(_b("color and center and analyze"),
+                            _b("colour and centre and analyse"))
+    assert [(old, new) for _, old, new in s['items']] == [
+        ('color', 'colour'), ('center', 'centre'), ('analyze', 'analyse')]
+
+
+def test_summarise_reports_line_numbers():
+    # Line numbers are what let a reader tell a prose correction from a
+    # corrupted machine token, and they cost nothing: the same diff yields them.
+    before = _b("clean\nthe color\nclean\nthe center\n")
+    after = _b("clean\nthe colour\nclean\nthe centre\n")
+    s = h.summarise_changes(before, after)
+    assert [(line, old) for line, old, _ in s['items']] == [(2, 'color'), (4, 'center')]
+
+
+def test_summarise_leaves_untouched_tokens_out_of_the_report():
+    # Only the comment changed here; the OOXML attribute did not. The report
+    # must say so rather than naming every candidate word on the line.
+    before = _b('w:color="auto"  # the color here')
+    after = _b('w:color="auto"  # the colour here')
+    s = h.summarise_changes(before, after)
+    assert s['total'] == 1
+
+
+def test_summarise_identical_is_no_change():
+    s = h.summarise_changes(_b("same"), _b("same"))
+    assert s['changed'] is False
+    assert s['items'] == []
+
+
+def test_summarise_unreadable_side_is_no_change():
+    # read_file_bytes returns None when the file vanished or became unreadable
+    # between the edit and the hook; that must report nothing, not raise.
+    assert h.summarise_changes(None, _b("x"))['changed'] is False
+    assert h.summarise_changes(_b("x"), None)['changed'] is False
+
+
+def test_summarise_line_count_change_falls_back_to_no_detail():
+    # An in-place word substitution never changes the line count; a truncated
+    # write does. Say a change happened without inventing a count.
+    s = h.summarise_changes(_b("a\nb\n"), _b("a\n"))
+    assert s['changed'] is True
+    assert s['detailed'] is False
+    assert s['total'] == 0
+
+
+def test_summarise_undecodable_bytes_do_not_raise():
+    s = h.summarise_changes(b"\xff\xfe color", b"\xff\xfe colour")
+    assert s['changed'] is True
+
+
+def test_summarise_line_ending_only_change_is_not_a_spelling_report():
+    # A BOM or line-ending difference changes the bytes but corrects nothing.
+    s = h.summarise_changes(_b("a\nb"), _b("a\r\nb"))
+    assert s['changed'] is True
+    assert s['detailed'] is False
+
+
+def test_format_change_list_caps_and_summarises_the_remainder():
+    items = [(i, 'color', 'colour') for i in range(1, 9)]
+    rendered = h.format_change_list(items)
+    assert rendered.count('->') == h.MAX_REPORTED_CHANGES
+    assert rendered.endswith('+3 more')
+
+
+# --- build_hook_output (what the user and the model actually receive) -------
+
+def _changed(before="the color", after="the colour"):
+    return h.summarise_changes(_b(before), _b(after))
+
+
+def test_output_reports_a_change_to_both_user_and_model():
+    out = h.build_hook_output('/repo/notes.md', _changed(), '', [])
+    assert out['systemMessage'].startswith('britfix rewrote 1 spelling in /repo/notes.md')
+    assert out['hookSpecificOutput']['hookEventName'] == 'PostToolUse'
+    assert 'additionalContext' in out['hookSpecificOutput']
+
+
+def test_output_names_the_full_path_not_the_basename():
+    # A basename cannot distinguish a prose correction from a corrupted
+    # attribute among several like-named files (issue #63).
+    out = h.build_hook_output('/repo/deep/notes.md', _changed(), '', [])
+    assert '/repo/deep/notes.md' in out['systemMessage']
+
+
+def test_output_tells_the_model_not_to_revert_the_change():
+    # additionalContext reaches the model that just made the edit. If it reads
+    # as a complaint, the model's next move is to put the US spelling back, the
+    # hook corrects it again, and the two loop; issue #53 records that happening.
+    out = h.build_hook_output('/repo/notes.md', _changed(), '', [])
+    ctx = out['hookSpecificOutput']['additionalContext']
+    assert 'must not be reverted' in ctx
+    assert '.britfixignore' in ctx
+
+
+def test_output_is_empty_when_nothing_changed():
+    # The hook fires after every Write and Edit on 35 extensions. Silence on a
+    # file it did not touch is what keeps that bearable.
+    assert h.build_hook_output('/repo/notes.md', _changed("same", "same"), '', []) == {}
+
+
+def test_output_reports_a_cli_failure_to_the_user():
+    out = h.build_hook_output('/repo/notes.md', _changed("same", "same"), 'uv not found', [])
+    assert 'uv not found' in out['systemMessage']
+
+
+def test_output_reports_a_skip_to_the_model_only():
+    # 'britfix skipped this file' explains to the model why the US spellings it
+    # wrote are still present. It is not a warning the user needs.
+    note = 'britfix: skipped {"path": "/repo/a.tex", "reason": "unterminated math"}'
+    out = h.build_hook_output('/repo/a.tex', _changed("same", "same"), '', [note])
+    assert 'unterminated math' in out['hookSpecificOutput']['additionalContext']
+    assert 'systemMessage' not in out
+
+
+def test_output_strings_stay_well_under_the_ten_thousand_character_cap():
+    # Claude Code replaces an over-long hook string with a preview and a file
+    # path, which would stop the JSON parsing.
+    items = [(i, 'color', 'colour') for i in range(1, 500)]
+    summary = {'changed': True, 'detailed': True, 'total': len(items), 'items': items}
+    out = h.build_hook_output('/repo/notes.md', summary, '', [])
+    assert len(out['systemMessage']) <= h.MAX_MESSAGE_CHARS
+    assert len(out['hookSpecificOutput']['additionalContext']) <= h.MAX_MESSAGE_CHARS
+
+
+# --- run_britfix (no longer reads the CLI's prose) --------------------------
+
+def test_run_britfix_ignores_cli_stdout_wording():
+    # The hook no longer parses the CLI summary at all, so rewording it cannot
+    # change the report. This stdout is the exact shape that used to double.
+    class Result:
+        returncode = 0
+        stdout = "  color -> colour: 1 occurrence(s)\n  color -> colour: 1 occurrence(s)\n"
+        stderr = ""
+
+    with mock.patch.object(h.subprocess, 'run', return_value=Result()):
+        assert h.run_britfix('/tmp/x.md') == (True, "", [])
+
+
+def test_run_britfix_collects_skip_diagnostics():
+    note = 'britfix: skipped {"path": "/a.tex", "reason": "unterminated math"}'
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = note + "\n"
+
+    with mock.patch.object(h.subprocess, 'run', return_value=Result()):
+        ok, error, skipped = h.run_britfix('/tmp/x.tex')
+    assert (ok, error, skipped) == (True, "", [note])
+
+
+def test_run_britfix_timeout_is_not_fatal():
+    with mock.patch.object(h.subprocess, 'run',
+                           side_effect=subprocess.TimeoutExpired(cmd='britfix', timeout=10)):
+        assert h.run_britfix('/tmp/x.md') == (False, "Timeout", [])
+
+
+# --- main(): a valid JSON object and exit 0 on every path -------------------
+#
+# A malformed payload or a non-zero exit would break every Write and Edit in the
+# session, so each of these asserts both, not just the behaviour under test.
+
+def _drive_main(monkeypatch, capsys, payload, result=(True, "", []), during_run=None):
+    """Run main() with britfix stubbed. Returns (exit_code, parsed_stdout)."""
+    def fake_run_britfix(file_path):
+        if during_run:
+            during_run(file_path)
+        return result
+
+    monkeypatch.setattr(h, "read_hook_input", lambda *a, **k: payload)
+    monkeypatch.setattr(h, "run_britfix", fake_run_britfix)
+    monkeypatch.setattr(h, "EXCLUDE_PATHS", [])
+    monkeypatch.setattr(h, "SUPPORTED_EXTENSIONS", {".md"})
+    code = h.main()
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_main_normal_change(monkeypatch, capsys, md_file):
+    def correct(file_path):
+        with open(file_path, 'w') as f:
+            f.write("the colour is nice")
+
+    code, out = _drive_main(monkeypatch, capsys, _payload(md_file), during_run=correct)
+    assert code == 0
+    assert out['systemMessage'].endswith("L1 color->colour")
+    assert out['hookSpecificOutput']['hookEventName'] == 'PostToolUse'
+
+
+def test_main_no_change_says_nothing(monkeypatch, capsys, md_file):
+    code, out = _drive_main(monkeypatch, capsys, _payload(md_file))
+    assert code == 0
+    assert out == {}
+
+
+def test_main_unsupported_extension(monkeypatch, capsys, tmp_path):
+    other = tmp_path / "image.bin"
+    other.write_text("the color is nice")
+    code, out = _drive_main(monkeypatch, capsys, _payload(str(other)))
+    assert code == 0
+    assert out == {}
+
+
+def test_main_excluded_path(monkeypatch, capsys, md_file):
+    monkeypatch.setattr(h, "read_hook_input", lambda *a, **k: _payload(md_file))
+    monkeypatch.setattr(h, "run_britfix", lambda fp: (True, "", []))
+    monkeypatch.setattr(h, "EXCLUDE_PATHS", ["note.md"])
+    monkeypatch.setattr(h, "SUPPORTED_EXTENSIONS", {".md"})
+    code = h.main()
+    assert code == 0
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_main_timeout(monkeypatch, capsys, md_file):
+    code, out = _drive_main(monkeypatch, capsys, _payload(md_file), result=(False, "Timeout", []))
+    assert code == 0
+    assert "Timeout" in out['systemMessage']
+
+
+def test_main_cli_failure(monkeypatch, capsys, md_file):
+    code, out = _drive_main(monkeypatch, capsys, _payload(md_file),
+                            result=(False, "britfix.py: boom", []))
+    assert code == 0
+    assert "boom" in out['systemMessage']
+
+
+def test_main_file_deleted_between_the_edit_and_the_hook(monkeypatch, capsys, tmp_path):
+    missing = tmp_path / "gone.md"
+    code, out = _drive_main(monkeypatch, capsys, _payload(str(missing)))
+    assert code == 0
+    assert out == {}
+
+
+def test_main_file_deleted_mid_run(monkeypatch, capsys, md_file):
+    # The file existed when the hook started and vanished while britfix ran, so
+    # the after-read fails. That must not raise and must not invent a report.
+    code, out = _drive_main(monkeypatch, capsys, _payload(md_file),
+                            during_run=lambda fp: os.remove(fp))
+    assert code == 0
+    assert out == {}
+
+
+def test_main_survives_a_broken_summariser(monkeypatch, capsys, md_file):
+    # A bug in the reporting code must cost the report, never the edit.
+    def explode(*args, **kwargs):
+        raise RuntimeError("summariser bug")
+
+    monkeypatch.setattr(h, "summarise_changes", explode)
+    code, out = _drive_main(monkeypatch, capsys, _payload(md_file))
+    assert code == 0
+    assert out == {}
+
+
+def test_main_ignores_other_hook_events(monkeypatch, capsys):
+    monkeypatch.setattr(h, "read_hook_input", lambda *a, **k: {"hook_event_name": "PreToolUse"})
+    code = h.main()
+    assert code == 0
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_main_does_not_echo_the_input_payload(monkeypatch, capsys, md_file):
+    # The echo was not required by the hook contract and actively broke it: for
+    # a large Write, tool_input.content pushed stdout past the 10,000 character
+    # output cap, at which point the payload is replaced by a preview and stops
+    # being parseable JSON, taking the report with it.
+    payload = _payload(md_file)
+    payload['tool_input']['content'] = 'x' * 20000
+    code, out = _drive_main(monkeypatch, capsys, payload)
+    assert code == 0
+    assert out == {}
