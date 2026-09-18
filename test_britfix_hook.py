@@ -39,6 +39,28 @@ def test_validate_exclude_paths_empty_string_is_fatal():
         h.validate_exclude_paths([''])
 
 
+def test_validate_exclude_paths_keeps_the_hook_wording(capsys):
+    """The rules moved into britfix_core in #85; the diagnostics did not.
+
+    The hook's stderr is what a user sees when an edit stops being corrected,
+    so the move had to leave the text and the exit code alone.
+    """
+    with pytest.raises(SystemExit) as exc:
+        h.validate_exclude_paths('/Transcripts/')
+    assert exc.value.code == 1
+    assert "[Britfix Error] 'exclude_paths' must be a list (got str)" in capsys.readouterr().err
+
+
+def test_merge_local_config_keeps_the_hook_wording(capsys, tmp_path):
+    p = tmp_path / "config.local.json"
+    p.write_text('{"strategies": {}}')
+    with pytest.raises(SystemExit) as exc:
+        h.merge_local_config({"strategies": {}, "exclude_paths": []}, p)
+    assert exc.value.code == 1
+    assert ("[Britfix Error] config.local.json may only set 'exclude_paths' "
+            "(got ['strategies'])") in capsys.readouterr().err
+
+
 # --- path_is_excluded (matching) -------------------------------------------
 
 def test_path_is_excluded_match():

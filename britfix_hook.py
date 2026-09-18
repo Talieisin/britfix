@@ -13,6 +13,11 @@ import difflib
 from pathlib import Path
 from datetime import datetime
 
+import britfix_core
+# Re-exported, not reimplemented: the hook and the CLI must apply one and the
+# same exclusion rule, which is what #85 was about.
+from britfix_core import ConfigError, path_is_excluded
+
 # Directory where this hook lives
 HOOK_DIR = Path(__file__).parent.resolve()
 
@@ -29,32 +34,22 @@ def log(message: str):
         except:
             pass
 
+# The exclusion rules themselves live in britfix_core, so the CLI applies the
+# same ones (#85). These two wrappers exist only to keep the hook's contract:
+# a bad config is fatal here, reported through log() and exit 1, rather than an
+# exception something upstream might swallow. The core's messages are the
+# wording these functions used before the move, so the hook's stderr is
+# unchanged.
 def validate_exclude_paths(raw) -> list:
     """Validate the `exclude_paths` config value: must be a list of non-empty strings.
     Invalid config is fatal (like a missing 'strategies' object): silently dropping
     entries would process files the user asked to protect, and an empty-string
     entry matches every path, silently disabling britfix everywhere."""
-    if not isinstance(raw, list):
-        log(f"[Britfix Error] 'exclude_paths' must be a list (got {type(raw).__name__})")
-        sys.exit(1)
-    for entry in raw:
-        if not isinstance(entry, str) or not entry:
-            log(f"[Britfix Error] 'exclude_paths' entries must be non-empty strings (got {entry!r})")
-            sys.exit(1)
-    return raw
-
-
-def path_is_excluded(file_path: str, exclude_paths: list) -> bool:
-    """True if file_path's resolved path contains any configured substring.
-    Compared in forward-slash (posix) form so substrings match cross-platform.
-    Matching is naive substring — see the config comment's footgun note."""
-    if not exclude_paths:
-        return False
     try:
-        resolved = Path(file_path).resolve().as_posix()
-    except OSError:
-        resolved = Path(file_path).as_posix()
-    return any(excl in resolved for excl in exclude_paths)
+        return britfix_core.validate_exclude_paths(raw)
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
+        sys.exit(1)
 
 
 def merge_local_config(config: dict, local_path: Path) -> dict:
@@ -62,31 +57,13 @@ def merge_local_config(config: dict, local_path: Path) -> dict:
 
     The local file may ONLY extend `exclude_paths` (plus comment keys) — its
     entries are appended to the base list. Other keys are a fatal error rather
-    than being silently ignored: in particular `strategies` must stay in the
-    shared config, because the CLI loads config.json independently and a
-    hook-only override would desync the two."""
-    if not local_path.exists():
-        return config
-
+    than being silently ignored; see merge_local_exclude_paths in britfix_core
+    for why `strategies` in particular may not be set here."""
     try:
-        with open(local_path) as f:
-            local = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        log(f"[Britfix Error] Cannot read {local_path.name}: {e}")
+        return britfix_core.merge_local_exclude_paths(config, local_path)
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
         sys.exit(1)
-
-    if not isinstance(local, dict):
-        log(f"[Britfix Error] {local_path.name} must be a JSON object")
-        sys.exit(1)
-
-    unknown = [k for k in local
-               if k != 'exclude_paths' and k != 'comment' and not k.endswith('_comment')]
-    if unknown:
-        log(f"[Britfix Error] {local_path.name} may only set 'exclude_paths' (got {sorted(unknown)})")
-        sys.exit(1)
-
-    config['exclude_paths'] = config['exclude_paths'] + validate_exclude_paths(local.get('exclude_paths', []))
-    return config
 
 
 # Load and validate config
