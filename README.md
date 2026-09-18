@@ -265,6 +265,41 @@ The `britfix_hook.py` script integrates with tools that support hooks to automat
 }
 ```
 
+### What the hook reports
+
+A rewrite is visible rather than silent. When the hook changes a file it returns
+the change in its JSON output: a one-line `systemMessage` for you, and a one-line
+`hookSpecificOutput.additionalContext` for the model that made the edit, so
+neither has to discover the rewrite by reading the diff afterwards.
+
+```
+britfix rewrote 2 spellings in /path/to/notes.md: L12 color->colour, L40 center->centre
+```
+
+The report names the path as given, the true number of changes and the line
+number of each, so a prose correction can be told apart from a rewritten
+machine-readable token. At most five changes are listed, then `+N more`.
+
+The note to the model says the rewrite is deliberate and must not be reverted,
+and points at [`.britfixignore`](#ignoring-words-britfixignore) for the case
+where a token has to keep its US spelling. Without that, the model's natural
+response is to put the spelling back, and the two loop.
+
+A file the hook did not change produces no output at all, which keeps the hook
+quiet on the great majority of edits. A `britfix: skipped` diagnostic is
+reported to the model, since it explains why spellings in that file are
+unchanged. A failure of the corrector itself, including a timeout, produces one
+line to you.
+
+The count comes from comparing the file before and after the run, not from the
+CLI's own summary. That summary prints each word twice, once per file and once
+in the totals, so reading it reported double the real number.
+
+The hook never blocks an edit. It always exits 0 and always prints one JSON
+object, including when the corrector fails, times out, or the file is deleted
+between the edit and the hook. It reports what changed; it cannot undo or
+prevent anything, because the write has already happened by the time it runs.
+
 ### Debugging
 
 Enable logging by uncommenting in `run-hook.sh`:
@@ -273,6 +308,12 @@ export BRITFIX_LOG=/tmp/britfix.log
 ```
 
 Then watch: `tail -f /tmp/britfix.log`
+
+Logging is off by default. Since the report is now surfaced in the session
+itself, the log is for auditing across sessions rather than for seeing what the
+hook did. The hook's stderr is not a substitute: a hook that exits 0 has its
+stderr sent to the debug log only, so it reaches neither the transcript nor the
+model.
 
 ### Python and file preservation
 
