@@ -910,7 +910,19 @@ class JSONStrategy(FileProcessingStrategy):
                         total_changes[word] += count
             else:
                 self._process_json_value(data, corrector, total_changes)
-            return json.dumps(data, indent=2, ensure_ascii=False), dict(total_changes)
+            # json.dumps never emits a terminator, so the input's trailing
+            # newline has to be put back by hand (issue #76). Every other
+            # strategy leaves the bytes outside a correction alone; JSON
+            # reserialises, so without this a corrected file loses its final
+            # newline on every run.
+            #
+            # A single LF is emitted even for a CRLF or lone-CR input, and
+            # that is deliberate rather than an oversight: json.dumps has
+            # already rewritten every interior separator to LF, so restoring
+            # the original terminator would leave the last line ending CRLF
+            # and every other line ending LF.
+            newline = '\n' if content.endswith(('\n', '\r')) else ''
+            return json.dumps(data, indent=2, ensure_ascii=False) + newline, dict(total_changes)
         except json.JSONDecodeError as e:
             print(
                 f"britfix: skipping malformed JSON ({e.msg} at line {e.lineno}, column {e.colno})",

@@ -2533,6 +2533,135 @@ class TestJSONStrategyHeuristic:
         assert changes == {}
 
 
+class TestJSONStrategyTrailingNewline:
+    """A JSON file's trailing newline must survive reserialisation (issue #76).
+
+    json.dumps emits no terminator, so JSONStrategy dropped the input's final
+    newline on every file it corrected. Every other strategy leaves the bytes
+    outside a correction alone; this restores that property for the one byte
+    JSON can cheaply keep.
+
+    Note what is deliberately NOT claimed here. JSONStrategy parses and
+    reserialises, so a minified or four-space document is still reindented
+    wholesale, and that is unchanged by this fix. Only the terminator is
+    preserved, not the layout.
+    """
+
+    @pytest.fixture
+    def strategy(self):
+        return JSONStrategy()
+
+    def _run_cli(self, monkeypatch, path):
+        monkeypatch.setattr(sys, 'argv',
+                            ['britfix', '--input', str(path), '--no-backup'])
+        britfix.main()
+
+    @pytest.mark.parametrize('sep, terminator, expected', [
+        ('\n', '\n', '\n'),      # the ordinary case: LF in, LF out
+        ('\n', '', ''),          # a file with no final newline must not gain one
+        ('\r\n', '\r\n', '\n'),  # CRLF collapses to LF, see the comment on the fix
+        ('\r', '\r', '\n'),      # a lone CR is still a line ending
+    ])
+    def test_object_keeps_its_terminator(self, strategy, corrector, sep, terminator, expected):
+        source = sep.join(['{', '  "note": "The color was analyzed"', '}']) + terminator
+        result, changes = strategy.process(source, corrector)
+        assert result == '{\n  "note": "The colour was analysed"\n}' + expected
+        assert changes == {'color': 1, 'analyzed': 1}
+
+    @pytest.mark.parametrize('source, expected', [
+        ('"The organization was analyzed"\n', '"The organisation was analysed"\n'),
+        ('"The organization was analyzed"', '"The organisation was analysed"'),
+        ('"organized"\n', '"organized"\n'),
+        ('"organized"', '"organized"'),
+        ('42\n', '42\n'),
+        ('42', '42'),
+        ('null\n', 'null\n'),
+        ('[]\n', '[]\n'),
+        ('[\n  "The color is nice"\n]\n', '[\n  "The colour is nice"\n]\n'),
+    ])
+    def test_every_root_shape_keeps_its_terminator(self, strategy, corrector, source, expected):
+        """Corrected or not, scalar root or container, the terminator survives.
+
+        The uncorrected rows matter as much as the corrected ones: the old code
+        stripped the newline off a document it had changed nothing in.
+        """
+        result, _ = strategy.process(source, corrector)
+        assert result == expected
+
+    def test_repeated_processing_does_not_accumulate_newlines(self, strategy, corrector):
+        """Feeding the output back in must be a fixed point, not grow a newline."""
+        source = '{\n  "note": "The color was analyzed"\n}\n'
+        first, _ = strategy.process(source, corrector)
+        second, changes = strategy.process(first, corrector)
+        assert second == first
+        assert not second.endswith('\n\n')
+        assert changes == {}
+
+    def test_trailing_blank_lines_collapse_to_one_newline(self, strategy, corrector):
+        """A documented limit: the terminator is restored, trailing blank lines are not.
+
+        json.dumps has already discarded every byte of the original layout, so
+        there is nothing to restore them from. Pinned here so the behaviour is a
+        decision rather than an accident.
+        """
+        source = '{\n  "note": "The color was analyzed"\n}\n\n\n'
+        result, _ = strategy.process(source, corrector)
+        assert result == '{\n  "note": "The colour was analysed"\n}\n'
+
+    def test_body_is_byte_identical_apart_from_the_terminator(self, strategy, corrector):
+        """Indentation, key order and escaping must be exactly what shipped before.
+
+        Pinning the whole string rather than just the suffix is the point: this
+        fails if anyone reaches for indent=4, sort_keys or ensure_ascii while
+        they are in here.
+        """
+        source = '{"z": "The color was analyzed", "a": 1, "esc": "a \\"quoted\\" caf\\u00e9"}\n'
+        result, _ = strategy.process(source, corrector)
+        assert result == (
+            '{\n'
+            '  "z": "The colour was analysed",\n'
+            '  "a": 1,\n'
+            '  "esc": "a \\"quoted\\" café"\n'
+            '}\n'
+        )
+
+    def test_malformed_json_keeps_its_terminator(self, strategy, corrector, capsys):
+        """The skip path returns the input verbatim, so its newline is already safe."""
+        content = '{\n  "color": "organized",\n}\n'
+        result, changes = strategy.process(content, corrector)
+        assert result == content
+        assert changes == {}
+        assert 'skipping malformed JSON' in capsys.readouterr().err
+
+    def test_cli_keeps_the_trailing_newline_on_disk(self, tmp_path, monkeypatch):
+        """End to end: read_source, process and the write path together.
+
+        Asserting on bytes rather than text, because the whole defect is one byte.
+        """
+        path = tmp_path / 'settings.json'
+        path.write_bytes(b'{\n  "note": "The color was analyzed"\n}\n')
+        self._run_cli(monkeypatch, path)
+        assert path.read_bytes() == b'{\n  "note": "The colour was analysed"\n}\n'
+
+    def test_cli_adds_no_newline_where_there_was_none(self, tmp_path, monkeypatch):
+        """The control: a file without a terminator must not acquire one."""
+        path = tmp_path / 'settings.json'
+        path.write_bytes(b'{\n  "note": "The color was analyzed"\n}')
+        self._run_cli(monkeypatch, path)
+        assert path.read_bytes() == b'{\n  "note": "The colour was analysed"\n}'
+
+    def test_cli_keeps_both_the_bom_and_the_trailing_newline(self, tmp_path, monkeypatch):
+        """read_source strips the BOM and the write path re-prepends it.
+
+        The new terminator is appended inside process(), so it has to land after
+        the closing brace and leave the BOM at the front alone.
+        """
+        path = tmp_path / 'settings.json'
+        path.write_bytes(b'\xef\xbb\xbf{\n  "note": "The color was analyzed"\n}\n')
+        self._run_cli(monkeypatch, path)
+        assert path.read_bytes() == b'\xef\xbb\xbf{\n  "note": "The colour was analysed"\n}\n'
+
+
 @pytest.mark.parametrize("source, expected", [
     ("edemas", "oedemas"), ("edematous", "oedematous"),
     ("Edematous", "Oedematous"), ("EDEMAS", "OEDEMAS"),
