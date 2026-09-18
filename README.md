@@ -112,11 +112,19 @@ preserved whole (in `.py` its inner text is still corrected), and an unclosed
 run preserves the rest of that one comment (in `.py` correction carries on).
 
 A decimal number such as `1.5` has the same shape as a dotted name and is
-preserved too, which costs nothing. A quoted phrase from `.britfixignore` still
-wins over all of this, including a phrase that contains a dot. Two things are
-deliberately not protected: a URL, so the path of a URL written in a comment can
-still be corrected, and a full stop with no space after it, so `color.Then`
-reads as a dotted name and neither word is corrected.
+preserved too, which costs nothing. Two things are deliberately not protected: a
+URL, so the path of a URL written in a comment can still be corrected, and a full
+stop with no space after it, so `color.Then` reads as a dotted name and neither
+word is corrected.
+
+A quoted phrase from `.britfixignore` wins over both the dotted-name split and
+the backtick pairing, including a phrase that contains a dot. Two limits apply to
+phrases inside comments, both of which predate this protection. A phrase
+containing an apostrophe, a straight double quote or a backtick is split by the
+comment scanner before it can be matched, so its words can still be converted:
+with `"don't change color"` configured, `// don't change color here` still
+becomes `// don't change colour here`. And where two configured phrases overlap,
+only the longer one is honoured.
 
 ## Ignoring Words (`.britfixignore`)
 
