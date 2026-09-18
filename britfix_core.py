@@ -1208,6 +1208,10 @@ def _build_file_strategies() -> Dict[str, Tuple[str, FileProcessingStrategy]]:
 
 FILE_STRATEGIES = _build_file_strategies()
 
+# Every extension config.json configures a strategy for. The CLI gates on this
+# before processing a file on disk; see is_supported_extension.
+SUPPORTED_EXTENSIONS = frozenset(FILE_STRATEGIES)
+
 # Build CODE_EXTENSIONS set from config
 def _build_code_extensions() -> Set[str]:
     """Get code extensions from config."""
@@ -1232,6 +1236,27 @@ def get_file_strategy_name(file_extension: str) -> str:
     if entry:
         return entry[0]
     return 'text'
+
+
+def is_supported_extension(file_extension: str) -> bool:
+    """True if config.json configures a strategy for this extension.
+
+    Anything else falls through get_file_strategy to PlainTextStrategy, which
+    rewrites the whole file with no structural awareness: a .pyi, .lua, .yaml or
+    .tf file handled as plain text has its identifiers and keys rewritten, not
+    just its prose. So a caller processing a file from disk must ask this first
+    rather than relying on that fallback.
+
+    Note that the fallback now has no caller at all. Stdin does not reach it:
+    britfix.py names '.txt', which is a real key in FILE_STRATEGIES and resolves
+    through the map, and interactive stdin builds PlainTextStrategy directly.
+    It is kept only as a defensive default for callers outside this repository,
+    and nothing here may start depending on it again.
+
+    The hook has always gated on the same set, built from the same config; this
+    is what lets the CLI agree with it.
+    """
+    return file_extension.lower() in FILE_STRATEGIES
 
 
 def is_code_file(file_extension: str) -> bool:

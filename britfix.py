@@ -53,6 +53,8 @@ from britfix_core import (
     load_spelling_mappings,
     get_file_strategy,
     get_file_strategy_name,
+    is_supported_extension,
+    FILE_STRATEGIES,
     discover_ignore_words,
     get_corrector_for_strategy,
     get_user_ignore_path,
@@ -275,6 +277,32 @@ def process_stdin_interactive(content: str, corrector: SpellingCorrector) -> tup
     return navigate_changes_interactive(content, word_groups, "stdin")
 
 
+def supported_types_help() -> str:
+    """Render the supported extensions for --help, from the configured strategies.
+
+    Built from the same FILE_STRATEGIES map the CLI's gate consults, so the help
+    text cannot drift from what the tool will actually process. The hand-written
+    list this replaces had already drifted: it named 19 of the 35 configured
+    extensions, omitting all four CSS ones, four of the five Markdown ones and
+    eight of the twenty code ones. That was cosmetic while unlisted types were
+    silently processed anyway, and became misleading once they started being
+    skipped.
+
+    Percent signs are doubled because argparse runs the epilog through
+    %-formatting whenever it contains %(prog)s, which the examples below it do.
+    No configured extension contains one today; this keeps a future one from
+    turning --help into a ValueError.
+    """
+    by_strategy = defaultdict(list)
+    for ext, (strategy_name, _) in FILE_STRATEGIES.items():
+        by_strategy[strategy_name].append(ext)
+    lines = ['Supported file types (any other extension is skipped):']
+    for strategy_name in sorted(by_strategy):
+        extensions = ', '.join(sorted(by_strategy[strategy_name]))
+        lines.append(f'  - {strategy_name}: {extensions}')
+    return '\n'.join(lines).replace('%', '%%')
+
+
 def main():
     # Set up logging
     logging.basicConfig(
@@ -286,13 +314,8 @@ def main():
     parser = argparse.ArgumentParser(
         description='Correct American spellings in files with support for multiple file types.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Supported file types:
-  - Text: .txt, .md
-  - LaTeX: .tex
-  - Web: .html, .htm, .xml
-  - Data: .json
-  - Code: .py, .js, .java, .cpp, .c, .h, .cs, .rb, .go, .rs, .swift, .kt
+        epilog=f"""
+{supported_types_help()}
 
 Examples:
   %(prog)s --input file.md
@@ -407,6 +430,13 @@ Examples:
         try:
             # Get the appropriate processing strategy
             ext = os.path.splitext(filepath)[1].lower()
+            if not is_supported_extension(ext):
+                # Without this the file would be handled as plain text and have
+                # its code rewritten. Skipping is also what the hook already
+                # does for these extensions, so the two entry points agree.
+                raise ProcessingSkipped(
+                    f"no strategy configured for extension {ext or '(none)'}"
+                )
             strategy = get_file_strategy(ext)
             strategy_name = get_file_strategy_name(ext)
 

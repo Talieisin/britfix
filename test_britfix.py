@@ -3,8 +3,11 @@
 Tests for britfix - especially CodeStrategy context handling.
 """
 import os
+import sys
 import pytest
 from pathlib import Path
+
+import britfix
 from britfix_core import (
     SpellingCorrector,
     load_spelling_mappings,
@@ -22,6 +25,8 @@ from britfix_core import (
     filter_dictionary,
     get_corrector_for_strategy,
     get_file_strategy_name,
+    is_supported_extension,
+    SUPPORTED_EXTENSIONS,
     _ignore_cache,
     _corrector_cache,
 )
@@ -1416,6 +1421,116 @@ class TestGetFileStrategyName:
 
     def test_unknown_defaults_to_text(self):
         assert get_file_strategy_name('.xyz') == 'text'
+
+
+class TestSupportedExtensions:
+    """The CLI's extension gate (issue #75).
+
+    get_file_strategy still falls back to plain text, because stdin has no
+    filename and names '.txt' deliberately. Files on disk must be gated first.
+    """
+
+    @pytest.mark.parametrize('ext', ['.py', '.md', '.txt', '.tex', '.json', '.css'])
+    def test_configured_extensions_are_supported(self, ext):
+        assert is_supported_extension(ext)
+
+    @pytest.mark.parametrize('ext', ['.pyi', '.yaml', '.yml', '.toml', '.lua', '.tf', '.xyz'])
+    def test_unconfigured_extensions_are_not(self, ext):
+        assert not is_supported_extension(ext)
+
+    def test_no_extension_is_not_supported(self):
+        """Makefile, LICENSE and friends carry no signal about their structure."""
+        assert not is_supported_extension('')
+
+    def test_matching_is_case_insensitive(self):
+        assert is_supported_extension('.MD')
+        assert is_supported_extension('.Py')
+
+    def test_help_text_covers_every_configured_extension(self):
+        """--help is now the tool's own statement of what the gate allows.
+
+        The hand-written list it replaced named 19 of the 35 configured
+        extensions. That was merely untidy while unlisted types were processed
+        anyway; once they are skipped, an under-reporting help text tells the
+        user a supported file type will be refused.
+        """
+        text = britfix.supported_types_help()
+        listed = {ext.strip()
+                  for line in text.splitlines()[1:]
+                  for ext in line.split(':', 1)[1].split(',')}
+        assert listed == set(SUPPORTED_EXTENSIONS)
+
+    def test_rendered_help_lists_every_configured_extension(self, monkeypatch, capsys):
+        """Pin the epilog itself, not just the function behind it.
+
+        Asserting on supported_types_help() alone would stay green if the
+        epilog were reverted to a hand-written list, which is the exact drift
+        this is meant to prevent. Go through argparse instead, which also
+        proves the %-formatting of the examples still resolves.
+        """
+        monkeypatch.setattr(sys, 'argv', ['britfix', '--help'])
+        with pytest.raises(SystemExit):
+            britfix.main()
+        rendered = capsys.readouterr().out
+        for ext in SUPPORTED_EXTENSIONS:
+            assert ext in rendered, f'{ext} missing from --help'
+        assert 'britfix.py --input file.md' in rendered or '--input file.md' in rendered
+
+    def test_gate_agrees_with_the_hook(self):
+        """The two entry points must allow exactly the same set.
+
+        The hook's allowlist was the only thing preventing plain-text
+        conversion of code before this gate existed; if they drift, the CLI
+        starts corrupting a file the hook would have refused, which is the
+        defect in #75.
+        """
+        import britfix_hook
+
+        assert set(SUPPORTED_EXTENSIONS) == set(britfix_hook.SUPPORTED_EXTENSIONS)
+
+
+class TestCLIExtensionGate:
+    """End-to-end: unsupported files are skipped rather than plain-texted."""
+
+    def _run(self, monkeypatch, path):
+        monkeypatch.setattr(sys, 'argv',
+                            ['britfix', '--input', str(path), '--no-backup'])
+        britfix.main()
+
+    @pytest.mark.parametrize('name, source', [
+        ('probe.pyi', 'def f(color: bool = ...) -> None: ...\n'),
+        ('probe.yaml', 'color: red\ncenter: true\n'),
+        ('probe.lua', 'local color = "red"\n'),
+        ('Makefile', 'color=red\n'),
+    ])
+    def test_unsupported_file_is_untouched(self, tmp_path, monkeypatch, capsys, name, source):
+        path = tmp_path / name
+        path.write_text(source, encoding='utf-8')
+        self._run(monkeypatch, path)
+        assert path.read_text(encoding='utf-8') == source
+        assert 'britfix: skipped ' in capsys.readouterr().err
+
+    def test_skip_names_the_extension_and_path(self, tmp_path, monkeypatch, capsys):
+        path = tmp_path / 'probe.tf'
+        path.write_text('color = "red"\n', encoding='utf-8')
+        self._run(monkeypatch, path)
+        err = capsys.readouterr().err
+        assert 'no strategy configured for extension .tf' in err
+        assert str(path) in err
+
+    def test_supported_file_still_processed(self, tmp_path, monkeypatch):
+        """The gate must not cost an ordinary correction."""
+        path = tmp_path / 'notes.md'
+        path.write_text('The color of the harbor.\n', encoding='utf-8')
+        self._run(monkeypatch, path)
+        assert path.read_text(encoding='utf-8') == 'The colour of the harbour.\n'
+
+    def test_directory_scan_skips_only_the_unsupported(self, tmp_path, monkeypatch):
+        (tmp_path / 'notes.md').write_text('The color.\n', encoding='utf-8')
+        (tmp_path / 'stub.pyi').write_text('def f(color: int) -> None: ...\n', encoding='utf-8')
+        self._run(monkeypatch, tmp_path)
+        assert (tmp_path / 'notes.md').read_text(encoding='utf-8') == 'The colour.\n'
+        assert (tmp_path / 'stub.pyi').read_text(encoding='utf-8') == 'def f(color: int) -> None: ...\n'
 
 
 class TestBritfixIgnoreParsing:
