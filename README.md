@@ -255,8 +255,7 @@ Notes:
   protect.
 - Both entry points honour it. The hook skips the file silently; the CLI
   reports a `britfix: skipped` diagnostic naming the path and counts it in the
-  summary. The matching substring is deliberately not named there, since it
-  can be a fragment of a private path.
+  summary.
 - A relative path given to the CLI is resolved before matching, so one entry
   covers both `britfix --input notes/ep.md` and the absolute path the hook is
   given.
@@ -287,10 +286,13 @@ The file is never bundled into the built binary, so a `just build` executable
 sees the committed `exclude_paths` only. The hook runs the source tree, so the
 hook and the britfix it invokes both see your local file.
 
-`BRITFIX_LOCAL_CONFIG` points both entry points at a different local config, or
-at a path that does not exist to ignore one. It exists so the test suite can
-keep your personal exclusions out of its own runs, including the tests that
-invoke `britfix.py` as a subprocess.
+`BRITFIX_LOCAL_CONFIG` points both entry points at a different local config. It
+exists so the test suite can keep your personal exclusions out of its own runs,
+including the tests that invoke `britfix.py` as a subprocess. If it names a path
+that does not exist, britfix refuses to run: one stray variable silently turning
+off every private exclusion, on both entry points, is the failure this setting
+exists to prevent. To ignore your local config, point it at a file containing
+`{}`.
 
 ## Hook Integration
 

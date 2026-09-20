@@ -13,10 +13,13 @@ import difflib
 from pathlib import Path
 from datetime import datetime
 
-import britfix_core
+import britfix_config
 # Re-exported, not reimplemented: the hook and the CLI must apply one and the
-# same exclusion rule, which is what #85 was about.
-from britfix_core import ConfigError, path_is_excluded
+# same exclusion rule, which is what #85 was about. britfix_config, never
+# britfix_core: the core validates config.json at import and exits when it
+# refuses it, and this process runs on every edit the user makes. A config this
+# hook tolerates but the core rejects must go on leaving the hook working.
+from britfix_config import ConfigError, path_is_excluded
 
 # Directory where this hook lives
 HOOK_DIR = Path(__file__).parent.resolve()
@@ -46,7 +49,7 @@ def validate_exclude_paths(raw) -> list:
     entries would process files the user asked to protect, and an empty-string
     entry matches every path, silently disabling britfix everywhere."""
     try:
-        return britfix_core.validate_exclude_paths(raw)
+        return britfix_config.validate_exclude_paths(raw)
     except ConfigError as e:
         log(f"[Britfix Error] {e}")
         sys.exit(1)
@@ -60,7 +63,16 @@ def merge_local_config(config: dict, local_path: Path) -> dict:
     than being silently ignored; see merge_local_exclude_paths in britfix_core
     for why `strategies` in particular may not be set here."""
     try:
-        return britfix_core.merge_local_exclude_paths(config, local_path)
+        return britfix_config.merge_local_exclude_paths(config, local_path)
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
+        sys.exit(1)
+
+
+def local_config_path() -> Path:
+    """Where config.local.json is read from, with the hook's fatal contract."""
+    try:
+        return britfix_config.local_config_path()
     except ConfigError as e:
         log(f"[Britfix Error] {e}")
         sys.exit(1)
@@ -87,9 +99,10 @@ def load_config():
         sys.exit(1)
 
     config['exclude_paths'] = validate_exclude_paths(config.get('exclude_paths', []))
-    # Through the core, so the hook and the CLI cannot end up reading different
-    # local files. Unset, this is HOOK_DIR / 'config.local.json' as before.
-    config = merge_local_config(config, britfix_core.local_config_path())
+    # Through the shared module, so the hook and the CLI cannot end up reading
+    # different local files. Unset, this is HOOK_DIR / 'config.local.json' as
+    # before.
+    config = merge_local_config(config, local_config_path())
 
     return config
 

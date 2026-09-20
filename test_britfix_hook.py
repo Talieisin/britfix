@@ -3,9 +3,12 @@
 the change report the hook surfaces after a rewrite."""
 import json
 import os
+import shutil
 import subprocess
+import sys
 import time
 import unittest.mock as mock
+from pathlib import Path
 import pytest
 import britfix_hook as h
 
@@ -721,3 +724,151 @@ def test_malformed_json_diagnostic_is_treated_as_a_skip():
     out = h.build_hook_output('/repo/a.json', _changed("same", "same"), '', [note])
     assert 'systemMessage' not in out
     assert 'malformed JSON' in out['hookSpecificOutput']['additionalContext']
+
+
+# --- Config faults: what the hook does when config.json is wrong -----------
+#
+# The hook validates less than britfix_core does, and that difference is load
+# bearing. Of the eleven faults the core refuses, the hook detects four itself
+# and tolerates the other seven: with those it keeps running, reports nothing,
+# and the user's edit completes, because run_britfix degrades gracefully when
+# the CLI subprocess fails. That is a hook running on every edit in every
+# repository failing softly rather than hard.
+#
+# Nothing pinned any of it, which is how a change making all seven exit 1 on
+# every edit passed a green suite. Exit code, stderr text and the presence of
+# BRITFIX_LOG are all asserted here, because all three moved when it broke.
+
+_HOOK_MODULES = ('britfix_hook.py', 'britfix.py', 'britfix_core.py', 'britfix_config.py',
+                 'britfix_spans.py', 'britfix_python.py', 'britfix_latex.py',
+                 'spelling-mapper.json')
+
+# Faults the hook checks for itself: it reports them, with its prefix, and stops.
+_HOOK_OWNED_FAULTS = [
+    ('missing_strategies', {'exclude_paths': []},
+     "Config missing 'strategies' object"),
+    ('strategies_not_an_object', {'strategies': []},
+     "Config missing 'strategies' object"),
+]
+
+# Faults only britfix_core refuses. The hook must survive every one of them.
+_CORE_ONLY_FAULTS = [
+    ('missing_text_strategy', {'strategies': {'code': {'extensions': ['.py']}}}),
+    ('strategy_not_an_object',
+     {'strategies': {'text': ['.txt'], 'code': {'extensions': ['.py']}}}),
+    ('missing_extensions_key',
+     {'strategies': {'text': {}, 'code': {'extensions': ['.py']}}}),
+    ('extensions_not_a_list',
+     {'strategies': {'text': {'extensions': '.txt'}, 'code': {'extensions': ['.py']}}}),
+    ('empty_extensions',
+     {'strategies': {'text': {'extensions': []}, 'code': {'extensions': ['.py']}}}),
+    ('quote_policy_not_a_boolean',
+     {'strategies': {'text': {'extensions': ['.txt']}, 'code': {'extensions': ['.py']},
+                     'markdown': {'extensions': ['.md'], 'preserve_quoted_prose': 'yes'}}}),
+    ('bad_identifier_policy',
+     {'strategies': {'text': {'extensions': ['.txt']},
+                     'code': {'extensions': ['.py'],
+                              'python_identifier_protection': 'some'}}}),
+]
+
+
+def _hook_tree(tmp_path, config_text):
+    """A copy of the tree with a config.json of our choosing.
+
+    Copies rather than symlinks: Python resolves a script's symlink before it
+    sets sys.path[0], so a symlinked tree would import the real modules and read
+    the real config.
+    """
+    src = Path(h.__file__).resolve().parent
+    tree = tmp_path / 'britfix-copy'
+    tree.mkdir()
+    for name in _HOOK_MODULES:
+        shutil.copy2(src / name, tree / name)
+    (tree / 'config.json').write_text(config_text, encoding='utf-8')
+    return tree
+
+
+def _drive_hook_subprocess(tmp_path, tree):
+    """Run the copied hook on one payload, with logging enabled.
+
+    The target has an unsupported extension on purpose: the hook returns before
+    spawning the CLI, so the matrix stays fast and needs no uv, while still
+    proving the only thing at stake, which is that the hook survived its own
+    import and reached its normal path.
+    """
+    target = tmp_path / 'probe.bin'
+    target.write_text('the color is nice', encoding='utf-8')
+    payload = json.dumps({'hook_event_name': 'PostToolUse', 'tool_name': 'Write',
+                          'tool_input': {'file_path': str(target)}})
+    log_file = tmp_path / 'britfix.log'
+    env = dict(os.environ, BRITFIX_LOG=str(log_file))
+    env.pop('BRITFIX_LOCAL_CONFIG', None)
+    result = subprocess.run([sys.executable, str(tree / 'britfix_hook.py')],
+                            input=payload, capture_output=True, text=True, env=env)
+    return result, log_file
+
+
+@pytest.mark.parametrize('config', [c for _, c in _CORE_ONLY_FAULTS],
+                         ids=[n for n, _ in _CORE_ONLY_FAULTS])
+def test_config_the_core_refuses_still_leaves_the_hook_working(tmp_path, config):
+    """The hook tolerates these, so an edit is never blocked by one.
+
+    britfix_core refuses all seven at import and exits the process, so if the
+    hook ever imports it, every edit in every session fails instead of quietly
+    going uncorrected.
+    """
+    result, log_file = _drive_hook_subprocess(tmp_path, _hook_tree(tmp_path, json.dumps(config)))
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {}
+    assert 'Britfix config error' not in result.stderr
+
+
+@pytest.mark.parametrize('config, message', [(c, m) for _, c, m in _HOOK_OWNED_FAULTS],
+                         ids=[n for n, _, _ in _HOOK_OWNED_FAULTS])
+def test_config_the_hook_refuses_keeps_its_own_diagnostic(tmp_path, config, message):
+    result, log_file = _drive_hook_subprocess(tmp_path, _hook_tree(tmp_path, json.dumps(config)))
+
+    assert result.returncode == 1
+    assert f"[Britfix Error] {message}" in result.stderr
+    assert log_file.exists(), 'the hook reports through log(), so BRITFIX_LOG is written'
+    assert message in log_file.read_text()
+
+
+def test_invalid_json_config_keeps_the_hook_diagnostic(tmp_path):
+    result, log_file = _drive_hook_subprocess(tmp_path, _hook_tree(tmp_path, '{not json'))
+
+    assert result.returncode == 1
+    assert '[Britfix Error] Invalid JSON in config:' in result.stderr
+    assert log_file.exists()
+
+
+def test_missing_config_keeps_the_hook_diagnostic(tmp_path):
+    tree = _hook_tree(tmp_path, '{}')
+    (tree / 'config.json').unlink()
+    result, log_file = _drive_hook_subprocess(tmp_path, tree)
+
+    assert result.returncode == 1
+    assert '[Britfix Error] Config file not found:' in result.stderr
+    assert log_file.exists()
+
+
+def test_the_hook_does_not_import_the_core():
+    """The guard behind everything above, stated once as a fact about imports.
+
+    The shared exclusion policy lives in britfix_config precisely so that this
+    stays true; importing britfix_core would bring its import-time validation
+    and its exit with it.
+    """
+    import ast
+
+    source = (Path(h.__file__).resolve().parent / 'britfix_hook.py').read_text()
+    imported = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+
+    assert 'britfix_core' not in imported
+    assert 'britfix_config' in imported

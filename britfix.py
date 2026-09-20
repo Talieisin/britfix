@@ -445,10 +445,8 @@ Examples:
             
         try:
             # Verbatim-content protection, checked before the extension gate
-            # because the hook checks it first too, so both entry points give
-            # the same reason for the same file. The matching substring is
-            # deliberately not named in the diagnostic: it can be a fragment of
-            # a private path, and the hook relays these to the model.
+            # because the hook checks it first too, so a file both gates would
+            # catch is reported with the same reason by either entry point.
             if path_is_excluded(filepath, exclude_paths):
                 raise ProcessingSkipped('excluded by exclude_paths')
 

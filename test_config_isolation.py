@@ -29,6 +29,7 @@ def test_developer_exclusions_do_not_reach_the_suite(monkeypatch, tmp_path):
     macOS tmp_path, so without the conftest fixture the suite would quietly stop
     correcting its own fixtures on that machine and still report green.
     """
+    import britfix
     import britfix_core
 
     local = tmp_path / 'config.local.json'
@@ -36,10 +37,17 @@ def test_developer_exclusions_do_not_reach_the_suite(monkeypatch, tmp_path):
     monkeypatch.setattr(britfix_core, '_EXCLUDE_PATHS', None)
     monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(local))
 
-    # The loader would now exclude every path there is ...
+    # The loader really would exclude every path there is ...
     assert britfix_core.load_exclude_paths(britfix_core._CONFIG, local) == ('/',)
-    # ... and the suite still sees none of it.
-    assert britfix_core.get_exclude_paths() == ()
+
+    # ... and a CLI run in this process is still unaffected, because the
+    # fixture stands between. Take the fixture's patch away and this run skips
+    # the file instead of correcting it.
+    probe = tmp_path / 'probe.md'
+    probe.write_text('The color.\n')
+    monkeypatch.setattr(sys, 'argv', ['britfix', '--input', str(probe), '--no-backup', '--quiet'])
+    britfix.main()
+    assert probe.read_text() == 'The colour.\n'
 
 
 def test_subprocess_runs_ignore_the_developer_config(tmp_path):
@@ -49,8 +57,9 @@ def test_subprocess_runs_ignore_the_developer_config(tmp_path):
     disk in a new process. Only the environment variable reaches those, so it is
     what stops a personal config.local.json from deciding whether they pass.
     """
-    assert os.environ['BRITFIX_LOCAL_CONFIG']
-    assert not Path(os.environ['BRITFIX_LOCAL_CONFIG']).exists()
+    override = Path(os.environ['BRITFIX_LOCAL_CONFIG'])
+    assert override.exists(), 'a missing override is fatal, so it must be a real file'
+    assert override.read_text() == '{}'
 
     probe = tmp_path / 'probe.md'
     probe.write_text('The color.\n')

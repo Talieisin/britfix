@@ -32,6 +32,12 @@ def isolated_path_exclusions(monkeypatch, tmp_path):
     tests which run britfix.py as a subprocess, where patching this process
     changes nothing; the attribute patch covers the in-process callers and is
     what tests exercising exclusions override with what they need.
+
+    The variable names an empty but real config, not a missing one: a missing
+    one is a fatal error, so that britfix cannot be silently disabled by a stray
+    variable in someone's environment.
     """
-    monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(tmp_path / 'no-config.local.json'))
+    inert = tmp_path / 'inert-config.local.json'
+    inert.write_text('{}', encoding='utf-8')
+    monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(inert))
     monkeypatch.setattr(britfix_core, 'get_exclude_paths', lambda: ())
