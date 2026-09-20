@@ -37,12 +37,12 @@ def log(message: str):
         except:
             pass
 
-# The exclusion rules themselves live in britfix_core, so the CLI applies the
-# same ones (#85). These two wrappers exist only to keep the hook's contract:
-# a bad config is fatal here, reported through log() and exit 1, rather than an
-# exception something upstream might swallow. The core's messages are the
-# wording these functions used before the move, so the hook's stderr is
-# unchanged.
+# The exclusion rules themselves live in britfix_config, which britfix_core
+# imports too, so the CLI applies the same ones (#85). These wrappers exist only
+# to keep the hook's contract: a bad config is fatal here, reported through
+# log() and exit 1, rather than an exception something upstream might swallow.
+# britfix_config's messages are the wording these functions used before the
+# move, so the hook's stderr is unchanged.
 def validate_exclude_paths(raw) -> list:
     """Validate the `exclude_paths` config value: must be a list of non-empty strings.
     Invalid config is fatal (like a missing 'strategies' object): silently dropping
@@ -60,7 +60,7 @@ def merge_local_config(config: dict, local_path: Path) -> dict:
 
     The local file may ONLY extend `exclude_paths` (plus comment keys) — its
     entries are appended to the base list. Other keys are a fatal error rather
-    than being silently ignored; see merge_local_exclude_paths in britfix_core
+    than being silently ignored; see merge_local_exclude_paths in britfix_config
     for why `strategies` in particular may not be set here."""
     try:
         return britfix_config.merge_local_exclude_paths(config, local_path)

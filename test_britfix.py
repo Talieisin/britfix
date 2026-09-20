@@ -1676,6 +1676,16 @@ class TestLocalExcludeConfig:
         with pytest.raises(ConfigError):
             britfix_core.local_config_path()
 
+    def test_config_without_the_key_is_legitimate(self, tmp_path):
+        """exclude_paths is optional, so there is simply nothing to extend.
+
+        This used to raise KeyError, which is not the documented failure type
+        of a function the core re-exports.
+        """
+        cfg = merge_local_exclude_paths({'strategies': {}},
+                                        self._local(tmp_path, {'exclude_paths': ['/private/']}))
+        assert cfg['exclude_paths'] == ['/private/']
+
     def test_load_does_not_mutate_the_caller(self, tmp_path):
         """The core's own _CONFIG is passed here; appending to it would leak."""
         base = self._base()

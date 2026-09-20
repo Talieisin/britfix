@@ -131,7 +131,12 @@ def merge_local_exclude_paths(config: dict, local_path: Path) -> dict:
     if unknown:
         raise ConfigError(f"{local_path.name} may only set 'exclude_paths' (got {sorted(unknown)})")
 
-    config['exclude_paths'] = config['exclude_paths'] + validate_exclude_paths(local.get('exclude_paths', []))
+    # .get, not indexing: `exclude_paths` is optional in config.json, as
+    # load_exclude_paths already treats it, so a config without the key is a
+    # legitimate one with nothing to extend rather than a fault. Indexing raised
+    # KeyError here, which is not this function's documented failure type now
+    # that it is re-exported and callable from outside.
+    config['exclude_paths'] = config.get('exclude_paths', []) + validate_exclude_paths(local.get('exclude_paths', []))
     return config
 
 
