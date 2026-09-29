@@ -1,13 +1,17 @@
-# managed-by: talieisin-org-bootstrap v1
-# `@claude <question>` on any PR or issue comment: an unprivileged Claude
-# round researches the question against this repo and posts the answer.
+# managed-by: talieisin-org-bootstrap v2
+# `@claude <question>` in a PR conversation or issue comment: an
+# unprivileged Claude round researches the question against this repo and
+# posts the answer.
 # Authorised commenters only (org variable AI_COMMAND_USERS); read-only —
 # it never changes code. All logic lives in the org's shared workflows.
 name: Claude command
+# issue_comment only (v2 dropped pull_request_review_comment): GitHub
+# creates-and-holds a run for EVERY inline review comment before the job's
+# if is evaluated, so each Copilot inline comment left an action_required
+# suite on the PR head, which reads UNSTABLE until it is removed. An
+# issue_comment run attaches to the default branch instead.
 on:
   issue_comment:
-    types: [created]
-  pull_request_review_comment:
     types: [created]
 
 # Minimal explicit permissions: they CAP what the reusable workflow's
