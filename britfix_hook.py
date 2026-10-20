@@ -13,6 +13,14 @@ import difflib
 from pathlib import Path
 from datetime import datetime
 
+import britfix_config
+# Re-exported, not reimplemented: the hook and the CLI must apply one and the
+# same exclusion rule, which is what #85 was about. britfix_config, never
+# britfix_core: the core validates config.json at import and exits when it
+# refuses it, and this process runs on every edit the user makes. A config this
+# hook tolerates but the core rejects must go on leaving the hook working.
+from britfix_config import ConfigError, path_is_excluded
+
 # Directory where this hook lives
 HOOK_DIR = Path(__file__).parent.resolve()
 
@@ -29,32 +37,22 @@ def log(message: str):
         except:
             pass
 
+# The exclusion rules themselves live in britfix_config, which britfix_core
+# imports too, so the CLI applies the same ones (#85). These wrappers exist only
+# to keep the hook's contract: a bad config is fatal here, reported through
+# log() and exit 1, rather than an exception something upstream might swallow.
+# britfix_config's messages are the wording these functions used before the
+# move, so the hook's stderr is unchanged.
 def validate_exclude_paths(raw) -> list:
     """Validate the `exclude_paths` config value: must be a list of non-empty strings.
     Invalid config is fatal (like a missing 'strategies' object): silently dropping
     entries would process files the user asked to protect, and an empty-string
     entry matches every path, silently disabling britfix everywhere."""
-    if not isinstance(raw, list):
-        log(f"[Britfix Error] 'exclude_paths' must be a list (got {type(raw).__name__})")
-        sys.exit(1)
-    for entry in raw:
-        if not isinstance(entry, str) or not entry:
-            log(f"[Britfix Error] 'exclude_paths' entries must be non-empty strings (got {entry!r})")
-            sys.exit(1)
-    return raw
-
-
-def path_is_excluded(file_path: str, exclude_paths: list) -> bool:
-    """True if file_path's resolved path contains any configured substring.
-    Compared in forward-slash (posix) form so substrings match cross-platform.
-    Matching is naive substring — see the config comment's footgun note."""
-    if not exclude_paths:
-        return False
     try:
-        resolved = Path(file_path).resolve().as_posix()
-    except OSError:
-        resolved = Path(file_path).as_posix()
-    return any(excl in resolved for excl in exclude_paths)
+        return britfix_config.validate_exclude_paths(raw)
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
+        sys.exit(1)
 
 
 def merge_local_config(config: dict, local_path: Path) -> dict:
@@ -62,31 +60,22 @@ def merge_local_config(config: dict, local_path: Path) -> dict:
 
     The local file may ONLY extend `exclude_paths` (plus comment keys) — its
     entries are appended to the base list. Other keys are a fatal error rather
-    than being silently ignored: in particular `strategies` must stay in the
-    shared config, because the CLI loads config.json independently and a
-    hook-only override would desync the two."""
-    if not local_path.exists():
-        return config
-
+    than being silently ignored; see merge_local_exclude_paths in britfix_config
+    for why `strategies` in particular may not be set here."""
     try:
-        with open(local_path) as f:
-            local = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        log(f"[Britfix Error] Cannot read {local_path.name}: {e}")
+        return britfix_config.merge_local_exclude_paths(config, local_path)
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
         sys.exit(1)
 
-    if not isinstance(local, dict):
-        log(f"[Britfix Error] {local_path.name} must be a JSON object")
-        sys.exit(1)
 
-    unknown = [k for k in local
-               if k != 'exclude_paths' and k != 'comment' and not k.endswith('_comment')]
-    if unknown:
-        log(f"[Britfix Error] {local_path.name} may only set 'exclude_paths' (got {sorted(unknown)})")
+def local_config_path() -> Path:
+    """Where config.local.json is read from, with the hook's fatal contract."""
+    try:
+        return britfix_config.local_config_path()
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
         sys.exit(1)
-
-    config['exclude_paths'] = config['exclude_paths'] + validate_exclude_paths(local.get('exclude_paths', []))
-    return config
 
 
 # Load and validate config
@@ -110,7 +99,10 @@ def load_config():
         sys.exit(1)
 
     config['exclude_paths'] = validate_exclude_paths(config.get('exclude_paths', []))
-    config = merge_local_config(config, HOOK_DIR / 'config.local.json')
+    # Through the shared module, so the hook and the CLI cannot end up reading
+    # different local files. Unset, this is HOOK_DIR / 'config.local.json' as
+    # before.
+    config = merge_local_config(config, local_config_path())
 
     return config
 

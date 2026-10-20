@@ -11,11 +11,17 @@ from typing import Dict, List, Tuple, Optional, Set
 from collections import defaultdict
 
 from britfix_spans import merge_spans
-
-
-class ConfigError(Exception):
-    """Raised when config.json is missing or invalid."""
-    pass
+# Re-exported, so callers can keep importing these from the core. They live in
+# britfix_config because britfix_hook imports them and must not import this
+# module; see the comment on the exclusions section below.
+from britfix_config import (  # noqa: F401
+    ConfigError,
+    local_config_path,
+    validate_exclude_paths,
+    path_is_excluded,
+    merge_local_exclude_paths,
+    load_exclude_paths,
+)
 
 
 def _load_config() -> Dict:
@@ -72,6 +78,35 @@ try:
 except ConfigError as e:
     print(f"Britfix config error: {e}", file=sys.stderr)
     sys.exit(1)
+
+
+# --- Path exclusions (exclude_paths) ---------------------------------------
+#
+# The policy itself lives in britfix_config, which britfix_hook imports too:
+# the hook must not import this module, because this module validates
+# config.json at import and exits when it refuses it. Re-exported here so
+# callers can keep importing config names from the core.
+
+
+_EXCLUDE_PATHS = None
+
+
+def get_exclude_paths() -> tuple:
+    """The exclusions this installation is configured with, loaded once.
+
+    Loaded on first use rather than at import. config.local.json is read here,
+    and the hook does its own loading so that a bad value is reported in the
+    hook's voice; validating it at import would make this module's error win
+    that race and silently replace the hook's diagnostics.
+
+    Raises ConfigError, which the CLI turns into the same fatal message an
+    invalid config.json already produces.
+    """
+    global _EXCLUDE_PATHS
+    if _EXCLUDE_PATHS is None:
+        _EXCLUDE_PATHS = load_exclude_paths(_CONFIG, local_config_path())
+    return _EXCLUDE_PATHS
+
 
 # Private-use Unicode codepoint used to delimit phrase placeholders during the
 # mask-correct-restore pass in SpellingCorrector. Picked because it is non-word

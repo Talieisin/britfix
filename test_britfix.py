@@ -2,13 +2,22 @@
 """
 Tests for britfix - especially CodeStrategy context handling.
 """
+import json
 import os
+import shutil
+import subprocess
 import sys
 import pytest
 from pathlib import Path
 
 import britfix
+import britfix_core
 from britfix_core import (
+    ConfigError,
+    path_is_excluded,
+    validate_exclude_paths,
+    merge_local_exclude_paths,
+    load_exclude_paths,
     SpellingCorrector,
     load_spelling_mappings,
     CodeStrategy,
@@ -1531,6 +1540,398 @@ class TestCLIExtensionGate:
         self._run(monkeypatch, tmp_path)
         assert (tmp_path / 'notes.md').read_text(encoding='utf-8') == 'The colour.\n'
         assert (tmp_path / 'stub.pyi').read_text(encoding='utf-8') == 'def f(color: int) -> None: ...\n'
+
+
+class TestExcludePathsConfig:
+    """The shared path-exclusion policy, moved into the core by #85.
+
+    It used to live only in britfix_hook.py, so a file was protected when
+    Claude Code edited it through the hook and unprotected the moment anything
+    pointed the CLI at it. The rules below are the hook's, unchanged; what
+    changed is who can reach them.
+    """
+
+    def test_valid_list_is_returned(self):
+        assert validate_exclude_paths(['/Transcripts/', '/quotes/']) == ['/Transcripts/', '/quotes/']
+
+    def test_empty_list_is_valid(self):
+        assert validate_exclude_paths([]) == []
+
+    def test_non_list_is_a_config_error(self):
+        with pytest.raises(ConfigError):
+            validate_exclude_paths('/Transcripts/')
+
+    def test_non_string_entry_is_a_config_error(self):
+        with pytest.raises(ConfigError):
+            validate_exclude_paths(['/a/', 123])
+
+    def test_empty_string_entry_is_a_config_error(self):
+        """'' is a substring of every path: it would disable britfix silently."""
+        with pytest.raises(ConfigError):
+            validate_exclude_paths([''])
+
+    def test_match(self):
+        assert path_is_excluded('/home/u/Transcripts/ep.md', ['/Transcripts/'])
+
+    def test_no_match(self):
+        assert not path_is_excluded('/home/u/notes/ep.md', ['/Transcripts/'])
+
+    def test_empty_list_excludes_nothing(self):
+        assert not path_is_excluded('/home/u/anything.md', [])
+
+    def test_substring_footgun_is_preserved(self):
+        """Matching is naive substring and deliberately stays that way."""
+        assert path_is_excluded('/home/u/footnotes/ep.md', ['notes'])
+
+    def test_posix_form(self):
+        assert path_is_excluded('/home/u/a/b/ep.md', ['a/b'])
+
+    def test_relative_path_is_resolved_first(self, tmp_path, monkeypatch):
+        """The CLI takes relative paths; the hook is always given absolute ones.
+
+        Resolving first is what lets one configured substring cover both.
+        """
+        target = tmp_path / 'verbatim' / 'quote.md'
+        target.parent.mkdir()
+        target.write_text('x', encoding='utf-8')
+        monkeypatch.chdir(tmp_path)
+        assert path_is_excluded('verbatim/quote.md', ['/verbatim/'])
+
+
+class TestLocalExcludeConfig:
+    """config.local.json, which the CLI reads too since #85."""
+
+    def _base(self):
+        return {'strategies': {}, 'exclude_paths': ['/shared/']}
+
+    def _local(self, tmp_path, payload):
+        p = tmp_path / 'config.local.json'
+        p.write_text(payload if isinstance(payload, str) else json.dumps(payload), encoding='utf-8')
+        return p
+
+    def test_missing_file_is_a_noop(self, tmp_path):
+        assert merge_local_exclude_paths(self._base(), tmp_path / 'config.local.json') == self._base()
+
+    def test_entries_are_appended(self, tmp_path):
+        cfg = merge_local_exclude_paths(self._base(), self._local(tmp_path, {'exclude_paths': ['/private/']}))
+        assert cfg['exclude_paths'] == ['/shared/', '/private/']
+
+    def test_comment_keys_are_allowed(self, tmp_path):
+        cfg = merge_local_exclude_paths(self._base(),
+                                        self._local(tmp_path, {'comment': 'mine', 'exclude_paths': []}))
+        assert cfg['exclude_paths'] == ['/shared/']
+
+    def test_strategies_override_is_a_config_error(self, tmp_path):
+        """Strategies decide how content is transformed, so they stay committed."""
+        with pytest.raises(ConfigError):
+            merge_local_exclude_paths(self._base(), self._local(tmp_path, {'strategies': {}}))
+
+    def test_invalid_json_is_a_config_error(self, tmp_path):
+        with pytest.raises(ConfigError):
+            merge_local_exclude_paths(self._base(), self._local(tmp_path, '{not json'))
+
+    def test_non_object_is_a_config_error(self, tmp_path):
+        with pytest.raises(ConfigError):
+            merge_local_exclude_paths(self._base(), self._local(tmp_path, ['/private/']))
+
+    def test_local_entries_are_validated(self, tmp_path):
+        with pytest.raises(ConfigError):
+            merge_local_exclude_paths(self._base(), self._local(tmp_path, {'exclude_paths': ['']}))
+
+    def test_load_combines_both_files(self, tmp_path):
+        loaded = load_exclude_paths(self._base(), self._local(tmp_path, {'exclude_paths': ['/private/']}))
+        assert loaded == ('/shared/', '/private/')
+
+    def test_load_validates_the_base_list(self, tmp_path):
+        with pytest.raises(ConfigError):
+            load_exclude_paths({'exclude_paths': ''}, tmp_path / 'config.local.json')
+
+    def test_default_location_is_beside_the_module(self, monkeypatch):
+        monkeypatch.delenv('BRITFIX_LOCAL_CONFIG', raising=False)
+        assert britfix_core.local_config_path() == (
+            Path(britfix_core.__file__).parent / 'config.local.json'
+        )
+
+    def test_default_location_missing_is_not_an_error(self, monkeypatch, tmp_path):
+        """No local config is the normal state, and says nothing either way."""
+        monkeypatch.delenv('BRITFIX_LOCAL_CONFIG', raising=False)
+        assert load_exclude_paths(self._base(), tmp_path / 'absent.json') == ('/shared/',)
+
+    def test_environment_overrides_the_location(self, monkeypatch, tmp_path):
+        """How the suite keeps a developer's own exclusions out of its runs."""
+        elsewhere = tmp_path / 'elsewhere.json'
+        elsewhere.write_text('{}', encoding='utf-8')
+        monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(elsewhere))
+        assert britfix_core.local_config_path() == elsewhere
+
+    def test_override_naming_a_missing_file_is_a_config_error(self, monkeypatch, tmp_path):
+        """An override that names nothing must not quietly mean 'no exclusions'.
+
+        Every private exclusion on both entry points would be off, with no
+        diagnostic anywhere, because of one stray environment variable. An
+        absent default file is different: that is the normal state, not an
+        instruction that went wrong.
+        """
+        monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(tmp_path / 'gone.json'))
+        with pytest.raises(ConfigError):
+            britfix_core.local_config_path()
+
+    @pytest.mark.parametrize('override', ['config.local.json', '', '.'])
+    def test_relative_override_is_a_config_error(self, monkeypatch, tmp_path, override):
+        """A relative override would resolve differently in the hook and the CLI.
+
+        The hook runs the CLI with its own directory as the working directory
+        and passes the variable on unchanged, so a relative path, even one that
+        exists from where the hook was started, is refused rather than resolved.
+        """
+        (tmp_path / 'config.local.json').write_text('{}', encoding='utf-8')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', override)
+        with pytest.raises(ConfigError, match='must be an absolute path'):
+            britfix_core.local_config_path()
+
+    def test_config_without_the_key_is_legitimate(self, tmp_path):
+        """exclude_paths is optional, so there is simply nothing to extend.
+
+        This used to raise KeyError, which is not the documented failure type
+        of a function the core re-exports.
+        """
+        cfg = merge_local_exclude_paths({'strategies': {}},
+                                        self._local(tmp_path, {'exclude_paths': ['/private/']}))
+        assert cfg['exclude_paths'] == ['/private/']
+
+    def test_load_does_not_mutate_the_caller(self, tmp_path):
+        """The core's own _CONFIG is passed here; appending to it would leak."""
+        base = self._base()
+        load_exclude_paths(base, self._local(tmp_path, {'exclude_paths': ['/private/']}))
+        assert base['exclude_paths'] == ['/shared/']
+
+
+class TestCLIExclusionGate:
+    """End-to-end: an excluded file is skipped rather than corrected (#85)."""
+
+    def _run(self, monkeypatch, path, exclusions):
+        monkeypatch.setattr(britfix_core, 'get_exclude_paths', lambda: tuple(exclusions))
+        monkeypatch.setattr(sys, 'argv',
+                            ['britfix', '--input', str(path), '--no-backup'])
+        britfix.main()
+
+    def test_excluded_file_is_untouched(self, tmp_path, monkeypatch, capsys):
+        source = 'The color of the harbor.\n'
+        path = tmp_path / 'verbatim' / 'quote.md'
+        path.parent.mkdir()
+        path.write_text(source, encoding='utf-8')
+        self._run(monkeypatch, path, ['/verbatim/'])
+        assert path.read_text(encoding='utf-8') == source
+        assert 'britfix: skipped ' in capsys.readouterr().err
+
+    def test_skip_names_the_reason_and_the_path(self, tmp_path, monkeypatch, capsys):
+        """What the diagnostic owes the reader: which file, and why.
+
+        It does not try to withhold the matching substring. It could not: the
+        substring is part of the path it prints, by definition of matching.
+        """
+        path = tmp_path / 'verbatim' / 'quote.md'
+        path.parent.mkdir()
+        path.write_text('The color.\n', encoding='utf-8')
+        self._run(monkeypatch, path, ['/verbatim/'])
+        err = capsys.readouterr().err
+        assert 'excluded by exclude_paths' in err
+        assert str(path) in err
+
+    def test_exclusion_is_reported_before_the_extension_gate(self, tmp_path, monkeypatch, capsys):
+        """Order matters to the diagnostic, not to the outcome.
+
+        Both gates would skip this file, so nothing is processed either way,
+        but the hook checks exclusion first and the two entry points should
+        agree on why a file was left alone. Nothing else in the suite fails if
+        the two gates are swapped.
+        """
+        path = tmp_path / 'verbatim' / 'stub.pyi'
+        path.parent.mkdir()
+        path.write_text('def f(color: int) -> None: ...\n', encoding='utf-8')
+        self._run(monkeypatch, path, ['/verbatim/'])
+        err = capsys.readouterr().err
+        assert 'excluded by exclude_paths' in err
+        assert 'no strategy configured' not in err
+
+    def test_unexcluded_file_is_still_corrected(self, tmp_path, monkeypatch):
+        """The control: the gate must not cost an ordinary correction."""
+        path = tmp_path / 'notes.md'
+        path.write_text('The color of the harbor.\n', encoding='utf-8')
+        self._run(monkeypatch, path, ['/nonexistent-fragment-xyz/'])
+        assert path.read_text(encoding='utf-8') == 'The colour of the harbour.\n'
+
+    def test_directory_scan_skips_only_the_excluded(self, tmp_path, monkeypatch):
+        (tmp_path / 'verbatim').mkdir()
+        (tmp_path / 'verbatim' / 'quote.md').write_text('The color.\n', encoding='utf-8')
+        (tmp_path / 'notes.md').write_text('The color.\n', encoding='utf-8')
+        monkeypatch.setattr(britfix_core, 'get_exclude_paths', lambda: ('/verbatim/',))
+        monkeypatch.setattr(sys, 'argv',
+                            ['britfix', '--input', str(tmp_path), '--recursive', '--no-backup'])
+        britfix.main()
+        assert (tmp_path / 'verbatim' / 'quote.md').read_text(encoding='utf-8') == 'The color.\n'
+        assert (tmp_path / 'notes.md').read_text(encoding='utf-8') == 'The colour.\n'
+
+    def test_unreadable_exclusions_stop_the_run(self, tmp_path, monkeypatch, capsys):
+        """An exclusion the tool cannot parse is one it cannot honour.
+
+        The per-file handler would have turned this into one file's error and
+        carried on processing the rest, which is the opposite of what a
+        protection setting should do when it is broken.
+        """
+        def boom():
+            raise ConfigError("'exclude_paths' must be a list (got str)")
+
+        path = tmp_path / 'notes.md'
+        path.write_text('The color.\n', encoding='utf-8')
+        monkeypatch.setattr(britfix_core, 'get_exclude_paths', boom)
+        monkeypatch.setattr(sys, 'argv', ['britfix', '--input', str(path), '--no-backup'])
+        with pytest.raises(SystemExit) as exc:
+            britfix.main()
+        assert exc.value.code == 1
+        assert 'Britfix config error' in capsys.readouterr().err
+        assert path.read_text(encoding='utf-8') == 'The color.\n'
+
+
+class TestExclusionWiring:
+    """The real config.json + config.local.json -> gate chain, in a subprocess.
+
+    Every other test here patches the loaded exclusions, so none of them would
+    notice if nothing ever called the loader. This runs britfix.py from a
+    throwaway copy of the tree with its own config.local.json, which is also
+    why it cannot be done in process: the path is resolved from the module's
+    own directory. It never touches the developer's checkout.
+    """
+
+    _MODULES = ('britfix.py', 'britfix_core.py', 'britfix_config.py', 'britfix_spans.py',
+                'britfix_python.py', 'britfix_latex.py', 'spelling-mapper.json', 'config.json')
+
+    def _tree(self, tmp_path, local_config):
+        """Copies, not symlinks: Python resolves a script's symlink before it
+        sets sys.path[0], so a symlinked tree imports the real modules and
+        reads the real config.local.json. Found by this test failing."""
+        src = Path(britfix.__file__).resolve().parent
+        tree = tmp_path / 'britfix-copy'
+        tree.mkdir()
+        for name in self._MODULES:
+            shutil.copy2(src / name, tree / name)
+        (tree / 'config.local.json').write_text(json.dumps(local_config), encoding='utf-8')
+        return tree
+
+    def _run(self, tree, target):
+        """Without BRITFIX_LOCAL_CONFIG, so the default resolution is what is
+        under test: the copy must find the config.local.json beside its own
+        modules. The suite sets that variable for isolation, and inheriting it
+        here would mean testing the override instead of the thing it overrides.
+        """
+        env = {k: v for k, v in os.environ.items() if k != 'BRITFIX_LOCAL_CONFIG'}
+        return subprocess.run(
+            [sys.executable, str(tree / 'britfix.py'), '--input', str(target),
+             '--no-backup', '--quiet'],
+            capture_output=True, text=True, env=env,
+        )
+
+    def test_local_config_protects_the_cli(self, tmp_path):
+        tree = self._tree(tmp_path, {'exclude_paths': ['/verbatim/']})
+        source = 'The color of the harbor.\n'
+        target = tmp_path / 'verbatim' / 'quote.md'
+        target.parent.mkdir()
+        target.write_text(source, encoding='utf-8')
+
+        result = self._run(tree, target)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert target.read_text(encoding='utf-8') == source
+        assert 'excluded by exclude_paths' in result.stderr
+
+    def test_the_same_copy_still_corrects_an_unexcluded_file(self, tmp_path):
+        """Control: without this, a broken copy would pass the test above."""
+        tree = self._tree(tmp_path, {'exclude_paths': ['/verbatim/']})
+        target = tmp_path / 'notes.md'
+        target.write_text('The color of the harbor.\n', encoding='utf-8')
+
+        result = self._run(tree, target)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert target.read_text(encoding='utf-8') == 'The colour of the harbour.\n'
+
+    def test_bad_local_config_stops_the_cli(self, tmp_path):
+        """Fatal on the CLI as it is on the hook: '' would match every path."""
+        tree = self._tree(tmp_path, {'exclude_paths': ['']})
+        target = tmp_path / 'notes.md'
+        target.write_text('The color.\n', encoding='utf-8')
+
+        result = self._run(tree, target)
+
+        assert result.returncode == 1
+        assert 'Britfix config error' in result.stderr
+        assert target.read_text(encoding='utf-8') == 'The color.\n'
+
+
+class TestHookAndCLIShareTheExclusionPolicy:
+    """The drift guard for #85, the same role #75's extension guard plays.
+
+    Identity rather than equality: the hook cannot grow its own copy of a rule
+    and diverge, because there is only one function.
+    """
+
+    def test_the_matcher_is_one_function(self):
+        import britfix_hook
+
+        assert britfix_hook.path_is_excluded is britfix_core.path_is_excluded
+
+    def test_the_hook_validates_through_the_shared_module(self, monkeypatch):
+        import britfix_config
+        import britfix_hook
+
+        seen = []
+        monkeypatch.setattr(britfix_config, 'validate_exclude_paths',
+                            lambda raw: (seen.append(raw), raw)[1])
+        britfix_hook.validate_exclude_paths(['/Transcripts/'])
+        assert seen == [['/Transcripts/']]
+
+    def test_the_hook_merges_through_the_shared_module(self, monkeypatch, tmp_path):
+        import britfix_config
+        import britfix_hook
+
+        seen = []
+        monkeypatch.setattr(britfix_config, 'merge_local_exclude_paths',
+                            lambda config, path: (seen.append(path), config)[1])
+        britfix_hook.merge_local_config({'exclude_paths': []}, tmp_path / 'config.local.json')
+        assert seen == [tmp_path / 'config.local.json']
+
+    def test_the_core_re_exports_the_same_objects(self):
+        """`from britfix_core import path_is_excluded` must not mean a copy."""
+        import britfix_config
+
+        assert britfix_core.path_is_excluded is britfix_config.path_is_excluded
+        assert britfix_core.ConfigError is britfix_config.ConfigError
+
+    def test_both_entry_points_load_the_same_exclusions(self, tmp_path):
+        """One local config, both entry points, the same list.
+
+        Run in a fresh interpreter. Imported here, the hook would hold whatever
+        exclusions were selected the first time anything imported it, so the
+        result would depend on which tests ran first and on the developer's own
+        config.local.json.
+        """
+        local = tmp_path / 'config.local.json'
+        local.write_text('{"exclude_paths": ["/Transcripts/"]}', encoding='utf-8')
+        probe = (
+            'import json, britfix_core, britfix_hook; '
+            'print(json.dumps([list(britfix_hook.EXCLUDE_PATHS), '
+            'list(britfix_core.get_exclude_paths())]))'
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', probe],
+            cwd=Path(britfix_core.__file__).parent,
+            env={**os.environ, 'BRITFIX_LOCAL_CONFIG': str(local)},
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        hook, cli = json.loads(result.stdout)
+        assert hook == cli
+        assert '/Transcripts/' in hook
 
 
 class TestBritfixIgnoreParsing:

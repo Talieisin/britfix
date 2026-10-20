@@ -48,7 +48,13 @@ def clear_to_end():
     print('\033[0J', end='')
 
 # Import our shared core module
+# The module itself, not just names from it, so the exclusion gate below reads
+# britfix_core.get_exclude_paths through one attribute the test suite can
+# neutralise in a single place (see conftest.py).
+import britfix_core
 from britfix_core import (
+    ConfigError,
+    path_is_excluded,
     SpellingCorrector,
     load_spelling_mappings,
     get_file_strategy,
@@ -415,6 +421,16 @@ Examples:
         logging.error("No files found matching the specified patterns")
         sys.exit(1)
     
+    # Load the path exclusions once, before the loop. Inside it a ConfigError
+    # would be caught by the per-file handler and reported as one file's
+    # problem, when an invalid config must stop the run: an exclusion the tool
+    # cannot parse is an exclusion it cannot honour.
+    try:
+        exclude_paths = britfix_core.get_exclude_paths()
+    except ConfigError as e:
+        print(f"Britfix config error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Process each file
     total_changes = defaultdict(int)
     processed_files = []
@@ -428,6 +444,12 @@ Examples:
             continue
             
         try:
+            # Verbatim-content protection, checked before the extension gate
+            # because the hook checks it first too, so a file both gates would
+            # catch is reported with the same reason by either entry point.
+            if path_is_excluded(filepath, exclude_paths):
+                raise ProcessingSkipped('excluded by exclude_paths')
+
             # Get the appropriate processing strategy
             ext = os.path.splitext(filepath)[1].lower()
             if not is_supported_extension(ext):

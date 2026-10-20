@@ -233,13 +233,13 @@ Edit `config.json` to customise file type handling:
 }
 ```
 
-### Excluding paths (hook only)
+### Excluding paths
 
-`exclude_paths` is a list of substrings matched against each written file's
-resolved absolute path (in forward-slash form, so entries work on any
-platform). If any substring is found in the path, the hook skips the file
-entirely. Use it to protect content that must stay verbatim (transcripts,
-quoted source text) which the word-level ignore files cannot cover:
+`exclude_paths` is a list of substrings matched against each file's resolved
+absolute path (in forward-slash form, so entries work on any platform). If any
+substring is found in the path, the file is skipped entirely. Use it to protect
+content that must stay verbatim (transcripts, quoted source text) which the
+word-level ignore files cannot cover:
 
 ```json
 {
@@ -252,10 +252,14 @@ Notes:
 - Matching is naive, case-sensitive substring: `notes` also matches
   `footnotes`, so prefer a distinctive fragment like `/Transcripts/`.
 - Entries must be non-empty strings. An invalid value (wrong type, or an
-  empty string, which would match every path) is a fatal config error: the
-  hook refuses to run rather than silently processing files you asked it to
+  empty string, which would match every path) is a fatal config error: britfix
+  refuses to run rather than silently processing files you asked it to
   protect.
-- This only affects the hook; the `britfix` CLI processes whatever it is
+- Both entry points honour it. The hook skips the file silently; the CLI
+  reports a `britfix: skipped` diagnostic naming the path and counts it in the
+  summary.
+- A relative path given to the CLI is resolved before matching, so one entry
+  covers both `britfix --input notes/ep.md` and the absolute path the hook is
   given.
 
 ### Local overrides (`config.local.json`)
@@ -270,11 +274,28 @@ list:
 }
 ```
 
-The local file may only set `exclude_paths` (and comment keys). Anything
-else, in particular `strategies`, is a fatal config error: strategies must stay
-in the shared `config.json`, which the CLI also reads, so a hook-only
-override would make the two disagree about how a file should be handled. The
-file is never bundled into the built binary.
+Both the hook and the CLI read this file, so a private exclusion protects you
+on either path.
+
+The local file may only set `exclude_paths` (and comment keys). Anything else,
+in particular `strategies`, is a fatal config error: strategies decide how
+content is transformed, so they belong in the shared `config.json` where they
+are committed and reviewable, and a local override would change britfix's
+output on one machine only. `exclude_paths` is the one setting that is safe to
+keep per-machine, because it only ever protects more.
+
+The file is never bundled into the built binary, so a `just build` executable
+sees the committed `exclude_paths` only. The hook runs the source tree, so the
+hook and the britfix it invokes both see your local file.
+
+`BRITFIX_LOCAL_CONFIG` points both entry points at a different local config. It
+exists so the test suite can keep your personal exclusions out of its own runs,
+including the tests that invoke `britfix.py` as a subprocess. It must be an
+absolute path, because the hook runs the CLI from its own directory. If it names a
+path that does not exist, britfix refuses to run: one stray variable silently turning
+off every private exclusion, on both entry points, is the failure this setting
+exists to prevent. To ignore your local config, point it at a file containing
+`{}`.
 
 ## Hook Integration
 
