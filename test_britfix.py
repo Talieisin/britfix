@@ -2222,7 +2222,10 @@ class TestRepositoryOptOut:
         user_config_dir = tmp_path / 'user_config' / 'britfix'
         user_config_dir.mkdir(parents=True)
         (user_config_dir / 'ignore').write_text('color\n', encoding='utf-8')
+        # Windows reads APPDATA and everything else XDG_CONFIG_HOME; both put
+        # the file at <base>/britfix/ignore, so one directory serves both.
         monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'user_config'))
+        monkeypatch.setenv('APPDATA', str(tmp_path / 'user_config'))
         assert get_user_ignore_path() == user_config_dir / 'ignore'
 
         self._run_cli(monkeypatch, '--input', str(doc), '--no-project-ignore')
