@@ -1408,11 +1408,11 @@ def get_user_ignore_path() -> Optional[Path]:
         return base / 'britfix' / 'ignore'
 
 
-# Cache for ignore lookups by directory path. Each value is the 4-tuple
-# returned by parse_britfixignore: global_words, scoped_words, global_phrases,
-# scoped_phrases.
+# Cache for ignore lookups, keyed by directory path and whether project files
+# were included. Each value is the 4-tuple returned by parse_britfixignore:
+# global_words, scoped_words, global_phrases, scoped_phrases.
 IgnoreRules = Tuple[Set[str], Dict[str, Set[str]], Set[str], Dict[str, Set[str]]]
-_ignore_cache: Dict[str, IgnoreRules] = {}
+_ignore_cache: Dict[Tuple[str, bool], IgnoreRules] = {}
 
 
 def _merge_scoped(base: Dict[str, Set[str]], overlay: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
@@ -1432,18 +1432,23 @@ def _merge_ignores(base: IgnoreRules, overlay: IgnoreRules) -> IgnoreRules:
     )
 
 
-def discover_ignore_words(file_path: str) -> IgnoreRules:
+def discover_ignore_words(file_path: str, include_project: bool = True) -> IgnoreRules:
     """Discover .britfixignore rules for a given file.
 
     Walks up from the file's directory to the nearest .git boundary or
     Path.home(), collects .britfixignore files root->leaf, merges with
     user config. Returns ``(global_words, scoped_words, global_phrases,
     scoped_phrases)``. Results are cached by directory.
+
+    With include_project False, only the user config applies. That is the
+    CLI's --no-project-ignore, which is how britfix is run on its own files:
+    the repository's .britfixignore disables every strategy, so that edits to
+    its deliberately American test data and docs are never corrected.
     """
     resolved = Path(file_path).resolve()
     file_dir = resolved.parent if resolved.is_file() or not resolved.exists() else resolved
 
-    cache_key = str(file_dir)
+    cache_key = (str(file_dir), include_project)
     if cache_key in _ignore_cache:
         return _ignore_cache[cache_key]
 
@@ -1476,10 +1481,11 @@ def discover_ignore_words(file_path: str) -> IgnoreRules:
     except ValueError:
         parts = [file_dir]
 
-    for d in parts:
-        candidate = d / '.britfixignore'
-        if candidate.is_file():
-            ignore_files.append(candidate)
+    if include_project:
+        for d in parts:
+            candidate = d / '.britfixignore'
+            if candidate.is_file():
+                ignore_files.append(candidate)
 
     # Start with user config
     result: IgnoreRules = (set(), {}, set(), {})
