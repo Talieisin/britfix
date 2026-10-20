@@ -288,8 +288,9 @@ hook and the britfix it invokes both see your local file.
 
 `BRITFIX_LOCAL_CONFIG` points both entry points at a different local config. It
 exists so the test suite can keep your personal exclusions out of its own runs,
-including the tests that invoke `britfix.py` as a subprocess. If it names a path
-that does not exist, britfix refuses to run: one stray variable silently turning
+including the tests that invoke `britfix.py` as a subprocess. It must be an
+absolute path, because the hook runs the CLI from its own directory. If it names a
+path that does not exist, britfix refuses to run: one stray variable silently turning
 off every private exclusion, on both entry points, is the failure this setting
 exists to prevent. To ignore your local config, point it at a file containing
 `{}`.

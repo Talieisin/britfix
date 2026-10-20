@@ -1676,6 +1676,20 @@ class TestLocalExcludeConfig:
         with pytest.raises(ConfigError):
             britfix_core.local_config_path()
 
+    @pytest.mark.parametrize('override', ['config.local.json', '', '.'])
+    def test_relative_override_is_a_config_error(self, monkeypatch, tmp_path, override):
+        """A relative override would resolve differently in the hook and the CLI.
+
+        The hook runs the CLI with its own directory as the working directory
+        and passes the variable on unchanged, so a relative path, even one that
+        exists from where the hook was started, is refused rather than resolved.
+        """
+        (tmp_path / 'config.local.json').write_text('{}', encoding='utf-8')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', override)
+        with pytest.raises(ConfigError, match='must be an absolute path'):
+            britfix_core.local_config_path()
+
     def test_config_without_the_key_is_legitimate(self, tmp_path):
         """exclude_paths is optional, so there is simply nothing to extend.
 
@@ -1894,21 +1908,30 @@ class TestHookAndCLIShareTheExclusionPolicy:
         assert britfix_core.path_is_excluded is britfix_config.path_is_excluded
         assert britfix_core.ConfigError is britfix_config.ConfigError
 
-    def test_both_entry_points_load_the_same_exclusions(self):
-        """Loaded from the real files, not the ones the suite neutralises.
+    def test_both_entry_points_load_the_same_exclusions(self, tmp_path):
+        """One local config, both entry points, the same list.
 
-        britfix_hook read them at import, before the suite's fixture was in
-        force, so this compares what the hook really holds against what the
-        core's loader really returns.
+        Run in a fresh interpreter. Imported here, the hook would hold whatever
+        exclusions were selected the first time anything imported it, so the
+        result would depend on which tests ran first and on the developer's own
+        config.local.json.
         """
-        import britfix_hook
-
-        assert list(britfix_hook.EXCLUDE_PATHS) == list(
-            britfix_core.load_exclude_paths(
-                britfix_core._CONFIG,
-                Path(britfix_core.__file__).parent / 'config.local.json',
-            )
+        local = tmp_path / 'config.local.json'
+        local.write_text('{"exclude_paths": ["/Transcripts/"]}', encoding='utf-8')
+        probe = (
+            'import json, britfix_core, britfix_hook; '
+            'print(json.dumps([list(britfix_hook.EXCLUDE_PATHS), '
+            'list(britfix_core.get_exclude_paths())]))'
         )
+        result = subprocess.run(
+            [sys.executable, '-c', probe],
+            cwd=Path(britfix_core.__file__).parent,
+            env={**os.environ, 'BRITFIX_LOCAL_CONFIG': str(local)},
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        hook, cli = json.loads(result.stdout)
+        assert hook == cli
+        assert '/Transcripts/' in hook
 
 
 class TestBritfixIgnoreParsing:

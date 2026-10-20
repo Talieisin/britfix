@@ -54,10 +54,19 @@ def local_config_path() -> Path:
     both entry points, because of one stray variable is exactly the failure this
     setting exists to prevent. Absence of the default file is still fine, since
     that is the normal state and not an instruction.
+
+    The override must be absolute. The hook launches the CLI with its own
+    directory as the working directory and the variable inherited unchanged, so
+    a relative override could name one file in the hook and another, or none,
+    in the CLI it runs.
     """
     override = os.environ.get('BRITFIX_LOCAL_CONFIG')
     if override is not None:
         path = Path(override)
+        if not path.is_absolute():
+            raise ConfigError(
+                f"BRITFIX_LOCAL_CONFIG must be an absolute path (got {override!r})"
+            )
         if not path.exists():
             raise ConfigError(
                 f"BRITFIX_LOCAL_CONFIG points at {path}, which does not exist"
