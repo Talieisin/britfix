@@ -2146,6 +2146,92 @@ class TestBritfixIgnoreDiscovery:
         assert isinstance(g, set)
 
 
+class TestRepositoryOptOut:
+    """This repository's own .britfixignore, and the flag that bypasses it.
+
+    The hook skips files in its own checkout, but any other clone or worktree
+    of this repository would have its deliberately American test data and docs
+    corrected on every edit. The committed .britfixignore disables every
+    strategy instead, and --no-project-ignore is how britfix is still run on
+    its own files when that is wanted.
+    """
+
+    REPO = Path(__file__).resolve().parent
+
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        _ignore_cache.clear()
+        yield
+        _ignore_cache.clear()
+
+    def test_every_configured_strategy_is_disabled(self):
+        """A strategy added to config.json without a line here would be exposed."""
+        content = (self.REPO / '.britfixignore').read_text(encoding='utf-8')
+        global_words, scoped, global_phrases, scoped_phrases = parse_britfixignore(content)
+        for name in britfix_core._CONFIG['strategies']:
+            assert scoped.get(name) == {'*'}, name
+
+    def test_it_disables_strategies_and_nothing_else(self):
+        """Only strategy opt-outs belong here, and only for strategies that exist."""
+        content = (self.REPO / '.britfixignore').read_text(encoding='utf-8')
+        global_words, scoped, global_phrases, scoped_phrases = parse_britfixignore(content)
+        assert global_words == set()
+        assert global_phrases == set()
+        assert scoped_phrases == {}
+        assert set(scoped) == set(britfix_core._CONFIG['strategies'])
+
+    def test_discovery_finds_it_for_this_repository(self):
+        _, scoped, _, _ = discover_ignore_words(__file__)
+        assert all(scoped.get(name) == {'*'} for name in britfix_core._CONFIG['strategies'])
+
+    def test_discovery_without_project_files_does_not(self):
+        _, scoped, _, _ = discover_ignore_words(__file__, include_project=False)
+        assert scoped == {}
+
+    def test_the_two_modes_are_cached_separately(self):
+        """One lookup must not answer the other for the same directory."""
+        discover_ignore_words(__file__)
+        _, scoped, _, _ = discover_ignore_words(__file__, include_project=False)
+        assert scoped == {}
+        _, scoped, _, _ = discover_ignore_words(__file__)
+        assert scoped.get('code') == {'*'}
+
+    def _project(self, tmp_path):
+        (tmp_path / '.git').mkdir()
+        (tmp_path / '.britfixignore').write_text('markdown:*\n', encoding='utf-8')
+        doc = tmp_path / 'doc.md'
+        doc.write_text('The color was analyzed.\n', encoding='utf-8')
+        return doc
+
+    def _run_cli(self, monkeypatch, *args):
+        monkeypatch.setattr(sys, 'argv', ['britfix', '--no-backup', *args])
+        britfix.main()
+
+    def test_the_cli_honours_a_project_opt_out(self, tmp_path, monkeypatch):
+        doc = self._project(tmp_path)
+        self._run_cli(monkeypatch, '--input', str(doc))
+        assert doc.read_text(encoding='utf-8') == 'The color was analyzed.\n'
+
+    def test_the_flag_bypasses_it(self, tmp_path, monkeypatch):
+        doc = self._project(tmp_path)
+        self._run_cli(monkeypatch, '--input', str(doc), '--no-project-ignore')
+        assert doc.read_text(encoding='utf-8') == 'The colour was analysed.\n'
+
+    def test_the_flag_keeps_the_user_level_ignore(self, tmp_path, monkeypatch):
+        doc = self._project(tmp_path)
+        user_config_dir = tmp_path / 'user_config' / 'britfix'
+        user_config_dir.mkdir(parents=True)
+        (user_config_dir / 'ignore').write_text('color\n', encoding='utf-8')
+        # Windows reads APPDATA and everything else XDG_CONFIG_HOME; both put
+        # the file at <base>/britfix/ignore, so one directory serves both.
+        monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'user_config'))
+        monkeypatch.setenv('APPDATA', str(tmp_path / 'user_config'))
+        assert get_user_ignore_path() == user_config_dir / 'ignore'
+
+        self._run_cli(monkeypatch, '--input', str(doc), '--no-project-ignore')
+        assert doc.read_text(encoding='utf-8') == 'The color was analysed.\n'
+
+
 class TestBritfixIgnoreParsingEdgeCases:
     """Edge cases for .britfixignore parsing."""
 

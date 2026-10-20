@@ -1,0 +1,17 @@
+# Britfix's own source is full of American spellings on purpose: test inputs,
+# docstrings and docs that name the words it corrects. The hook skips files in
+# its own checkout, but not in any other clone or worktree of this repository,
+# so this file disables every strategy here.
+#
+# To run britfix on these files deliberately, bypass it:
+#   just run --input README.md --no-project-ignore --dry-run
+#
+# One line per strategy in config.json. TestRepositoryOptOut fails if a
+# strategy is added there without a line here.
+text:*
+markdown:*
+latex:*
+html:*
+css:*
+json:*
+code:*

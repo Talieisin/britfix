@@ -49,6 +49,7 @@ britfix --input "src/*.py" --dry-run
 - `--no-backup`: Skip backup creation
 - `--recursive`: Process files recursively
 - `--quiet`: Only output corrected text (for pipelines)
+- `--no-project-ignore`: Skip the `.britfixignore` files found beside the input files. Your user-level ignore file still applies. The hook never passes this
 
 ## File Type Strategies
 
@@ -176,6 +177,8 @@ markdown:"mini program"
 ### File Discovery
 
 Britfix walks up from the target file, stopping at the first `.git` boundary, the home directory, or the filesystem root (whichever is found first). It collects `.britfixignore` files from that boundary down to the file's directory, merging them additively.
+
+`--no-project-ignore` skips these project files for one CLI run and keeps the user-level config below.
 
 ### User-Level Config
 
@@ -455,6 +458,14 @@ just test-hook     # Test hook
 just build         # Build standalone binary
 just clean         # Remove build artefacts
 ```
+
+This repository's own `.britfixignore` disables every strategy. Its tests, docstrings and docs name American spellings on purpose, and the hook only skips files inside its own checkout, so any other clone or worktree would have them corrected on every edit. To run britfix on these files deliberately:
+
+```bash
+just run --input README.md --no-project-ignore --dry-run
+```
+
+A strategy added to `config.json` needs a matching `<strategy>:*` line in `.britfixignore`; `TestRepositoryOptOut` fails until it has one.
 
 ## Licence
 

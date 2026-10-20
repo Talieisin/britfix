@@ -346,6 +346,9 @@ Examples:
                        help='Suppress detailed output')
     parser.add_argument('--interactive', '-i', action='store_true',
                        help='Interactively approve each change')
+    parser.add_argument('--no-project-ignore', action='store_true',
+                       help='Ignore .britfixignore files beside the input files; '
+                            'your user-level ignore file still applies')
     
     args = parser.parse_args()
     
@@ -464,7 +467,7 @@ Examples:
 
             # Discover ignore rules for this file (cached by directory)
             file_global, file_scoped, file_global_phrases, file_scoped_phrases = (
-                discover_ignore_words(filepath)
+                discover_ignore_words(filepath, include_project=not args.no_project_ignore)
             )
             file_corrector = get_corrector_for_strategy(
                 american_to_british,
