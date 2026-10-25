@@ -2029,6 +2029,52 @@ class TestUserExcludeConfig:
         with pytest.raises(ConfigError, match=r"^config\.local\.json: 'exclude_paths' entries"):
             merge_local_exclude_paths(self._base(), local)
 
+    @pytest.mark.parametrize('which', ['user', 'local'])
+    def test_non_utf8_file_is_a_config_error_not_a_traceback(self, tmp_path, which):
+        """UnicodeDecodeError is a ValueError, not an OSError, so it needs its
+        own catch; without one the hook died with a traceback on every edit."""
+        path = (britfix_core.user_config_path() if which == 'user'
+                else tmp_path / 'config.local.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'{"exclude_paths": ["/caf\xe9/"]}')  # Latin-1, not UTF-8
+        with pytest.raises(ConfigError, match='Cannot read'):
+            if which == 'user':
+                load_exclude_paths(self._base(), Path('/nonexistent'), path)
+            else:
+                merge_local_exclude_paths(self._base(), path)
+
+    def test_utf8_entries_are_read_as_utf8(self):
+        """Explicit encoding, so the result does not depend on the locale."""
+        user = britfix_core.user_config_path()
+        user.parent.mkdir(parents=True, exist_ok=True)
+        user.write_bytes('{"exclude_paths": ["/café/"]}'.encode('utf-8'))
+        assert load_exclude_paths(self._base(), Path('/nonexistent'), user) == ('/shared/', '/café/')
+
+    def test_directory_at_the_user_path_is_a_config_error(self):
+        user = britfix_core.user_config_path()
+        user.mkdir(parents=True)
+        with pytest.raises(ConfigError, match='Cannot read'):
+            load_exclude_paths(self._base(), Path('/nonexistent'), user)
+
+    def test_dangling_symlink_at_the_user_path_is_a_config_error(self, tmp_path):
+        """It names a file that has gone, which is not the same as no file."""
+        user = britfix_core.user_config_path()
+        user.parent.mkdir(parents=True, exist_ok=True)
+        user.symlink_to(tmp_path / 'gone.json')
+        with pytest.raises(ConfigError, match='Cannot read') as exc:
+            load_exclude_paths(self._base(), Path('/nonexistent'), user)
+        assert str(user) in str(exc.value)
+
+    def test_unknown_home_is_a_config_error(self, monkeypatch):
+        def no_home(cls):
+            raise RuntimeError('Could not determine home directory.')
+
+        monkeypatch.setattr(os, 'name', 'posix')
+        monkeypatch.delenv('XDG_CONFIG_HOME', raising=False)
+        monkeypatch.setattr(Path, 'home', classmethod(no_home))
+        with pytest.raises(ConfigError, match='Cannot find the user config directory'):
+            britfix_core.user_config_path()
+
     def test_cli_names_the_entry_and_its_source(self, tmp_path, monkeypatch, capsys):
         user = str(britfix_core.user_config_path())
         monkeypatch.setattr(britfix_core, '_EXCLUDE_SOURCES', (('/verbatim/', user),))

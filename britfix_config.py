@@ -131,8 +131,15 @@ def user_config_dir() -> Optional[Path]:
             return Path(appdata) / 'britfix'
         return None
     xdg = os.environ.get('XDG_CONFIG_HOME', '')
-    base = Path(xdg) if xdg and Path(xdg).is_absolute() else Path.home() / '.config'
-    return base / 'britfix'
+    if xdg and Path(xdg).is_absolute():
+        return Path(xdg) / 'britfix'
+    try:
+        home = Path.home()
+    except RuntimeError as e:
+        # No HOME and no password-database entry: say so as a config error
+        # rather than a traceback from the hook on every edit.
+        raise ConfigError(f"Cannot find the user config directory: {e}")
+    return home / '.config' / 'britfix'
 
 
 def user_config_path() -> Optional[Path]:
@@ -166,14 +173,19 @@ def merge_local_exclude_paths(config: dict, local_path: Path, label: Optional[st
     which is enough for config.local.json but not for a user-level file that
     shares its name with the shared config.json.
     """
-    if not local_path.exists():
+    # A dangling symlink is not absence: it names a file that has gone, and
+    # treating it as "no exclusions" would turn every one of them off silently.
+    # Opening it below raises, which becomes a ConfigError.
+    if not local_path.exists() and not local_path.is_symlink():
         return config
 
     label = label or local_path.name
     try:
-        with open(local_path) as f:
+        with open(local_path, encoding='utf-8') as f:
             local = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
+    except (ValueError, OSError) as e:
+        # ValueError covers both json.JSONDecodeError and UnicodeDecodeError,
+        # so a file that is not UTF-8 is reported here rather than as a traceback.
         raise ConfigError(f"Cannot read {label}: {e}")
 
     if not isinstance(local, dict):

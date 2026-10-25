@@ -90,6 +90,15 @@ def local_config_path() -> Path:
         sys.exit(1)
 
 
+def user_config_path():
+    """Where the user-level config.json is read from, with the hook's fatal contract."""
+    try:
+        return britfix_config.user_config_path()
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
+        sys.exit(1)
+
+
 # Load and validate config
 def load_config():
     """Load and validate config.json (plus optional config.local.json and the
@@ -117,7 +126,7 @@ def load_config():
     # before.
     config = merge_local_config(config, local_config_path())
     # Then the user-level file, last, in the order the CLI reads them.
-    config = merge_user_config(config, britfix_config.user_config_path())
+    config = merge_user_config(config, user_config_path())
 
     return config
 
