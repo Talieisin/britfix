@@ -17,9 +17,14 @@ from britfix_spans import merge_spans
 from britfix_config import (  # noqa: F401
     ConfigError,
     local_config_path,
+    user_config_dir,
+    user_config_path,
     validate_exclude_paths,
+    matching_exclude_path,
     path_is_excluded,
     merge_local_exclude_paths,
+    merge_user_exclude_paths,
+    load_exclude_sources,
     load_exclude_paths,
 )
 
@@ -88,24 +93,41 @@ except ConfigError as e:
 # callers can keep importing config names from the core.
 
 
-_EXCLUDE_PATHS = None
+_EXCLUDE_SOURCES = None
+
+
+def _exclude_sources() -> tuple:
+    global _EXCLUDE_SOURCES
+    if _EXCLUDE_SOURCES is None:
+        _EXCLUDE_SOURCES = load_exclude_sources(_CONFIG, local_config_path(), user_config_path())
+    return _EXCLUDE_SOURCES
 
 
 def get_exclude_paths() -> tuple:
     """The exclusions this installation is configured with, loaded once.
 
-    Loaded on first use rather than at import. config.local.json is read here,
-    and the hook does its own loading so that a bad value is reported in the
-    hook's voice; validating it at import would make this module's error win
-    that race and silently replace the hook's diagnostics.
+    config.json's, then config.local.json's, then the user-level config.json's
+    (see user_config_path). Loaded on first use rather than at import. The
+    extra files are read here, and the hook does its own loading so that a bad
+    value is reported in the hook's voice; validating them at import would make
+    this module's error win that race and silently replace the hook's
+    diagnostics.
 
     Raises ConfigError, which the CLI turns into the same fatal message an
     invalid config.json already produces.
     """
-    global _EXCLUDE_PATHS
-    if _EXCLUDE_PATHS is None:
-        _EXCLUDE_PATHS = load_exclude_paths(_CONFIG, local_config_path())
-    return _EXCLUDE_PATHS
+    return tuple(entry for entry, _ in _exclude_sources())
+
+
+def exclude_path_sources(entry: str) -> list:
+    """The files that configure `entry`, for the CLI's skip diagnostic.
+
+    Empty if the exclusions were never loaded from disk, which is the case when
+    a test supplies them directly.
+    """
+    if _EXCLUDE_SOURCES is None:
+        return []
+    return [source for e, source in _EXCLUDE_SOURCES if e == entry]
 
 
 # Private-use Unicode codepoint used to delimit phrase placeholders during the
@@ -1393,19 +1415,12 @@ def get_user_ignore_path() -> Optional[Path]:
 
     Windows: %APPDATA%/britfix/ignore
     Others: $XDG_CONFIG_HOME/britfix/ignore (default ~/.config/britfix/ignore)
+
+    The directory is the one the user-level config.json lives in; see
+    user_config_dir for how it is resolved.
     """
-    if os.name == 'nt':
-        appdata = os.environ.get('APPDATA', '')
-        if appdata:
-            return Path(appdata) / 'britfix' / 'ignore'
-        return None
-    else:
-        xdg = os.environ.get('XDG_CONFIG_HOME', '')
-        if xdg:
-            base = Path(xdg)
-        else:
-            base = Path.home() / '.config'
-        return base / 'britfix' / 'ignore'
+    base = user_config_dir()
+    return base / 'ignore' if base is not None else None
 
 
 # Cache for ignore lookups, keyed by directory path and whether project files

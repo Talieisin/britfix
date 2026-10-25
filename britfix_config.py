@@ -15,6 +15,7 @@ hook and the CLI apply one and the same rule rather than two copies of it.
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
 
 class ConfigError(Exception):
@@ -91,8 +92,8 @@ def validate_exclude_paths(raw) -> list:
     return raw
 
 
-def path_is_excluded(file_path: str, exclude_paths) -> bool:
-    """True if file_path's resolved path contains any configured substring.
+def matching_exclude_path(file_path: str, exclude_paths) -> Optional[str]:
+    """The first configured substring found in file_path's resolved path, or None.
 
     Compared in forward-slash (posix) form so substrings match cross-platform.
     Matching is naive substring - see the config comment's footgun note. A
@@ -100,57 +101,132 @@ def path_is_excluded(file_path: str, exclude_paths) -> bool:
     makes `britfix --input notes/ep.md` and the hook's absolute path agree.
     """
     if not exclude_paths:
-        return False
+        return None
     try:
         resolved = Path(file_path).resolve().as_posix()
     except OSError:
         resolved = Path(file_path).as_posix()
-    return any(excl in resolved for excl in exclude_paths)
+    return next((excl for excl in exclude_paths if excl in resolved), None)
 
 
-def merge_local_exclude_paths(config: dict, local_path: Path) -> dict:
-    """Merge an optional, gitignored config.local.json into the loaded config.
+def path_is_excluded(file_path: str, exclude_paths) -> bool:
+    """True if file_path's resolved path contains any configured substring."""
+    return matching_exclude_path(file_path, exclude_paths) is not None
 
-    The local file may ONLY extend `exclude_paths` (plus comment keys) - its
-    entries are appended to the base list. Other keys are a fatal error rather
-    than being silently ignored, `strategies` in particular: strategies decide
-    how content is transformed, so they must stay in the shared config where
-    they are committed and reviewable, and an override here would change output
-    on one machine only.
+
+def user_config_dir() -> Optional[Path]:
+    """The user-level britfix directory: the ignore file and config.json live here.
+
+    Windows: %APPDATA%\\britfix. Elsewhere: $XDG_CONFIG_HOME/britfix, or
+    ~/.config/britfix when that is unset. None on Windows without APPDATA.
+
+    A relative value is treated as unset, as the XDG Base Directory
+    specification asks. The hook runs the CLI with its own directory as the
+    working directory, so a relative value would name one file in the hook and
+    another in the CLI it runs.
+    """
+    if os.name == 'nt':
+        appdata = os.environ.get('APPDATA', '')
+        if appdata and Path(appdata).is_absolute():
+            return Path(appdata) / 'britfix'
+        return None
+    xdg = os.environ.get('XDG_CONFIG_HOME', '')
+    base = Path(xdg) if xdg and Path(xdg).is_absolute() else Path.home() / '.config'
+    return base / 'britfix'
+
+
+def user_config_path() -> Optional[Path]:
+    """Where the user-level config.json lives, beside the user ignore file.
+
+    It holds exclusions that belong to the person rather than to one checkout
+    of britfix, such as other people's code wherever it is cloned. It is read
+    by the hook, the CLI and a built binary alike, since none of them bundle it.
+    """
+    base = user_config_dir()
+    return base / 'config.json' if base is not None else None
+
+
+def merge_local_exclude_paths(config: dict, local_path: Path, label: Optional[str] = None) -> dict:
+    """Merge an optional exclusions-only config file into the loaded config.
+
+    Used for the gitignored config.local.json and for the user-level
+    config.json. Either file may ONLY extend `exclude_paths` (plus comment
+    keys) - its entries are appended to the base list. Other keys are a fatal
+    error rather than being silently ignored, `strategies` in particular:
+    strategies decide how content is transformed, so they must stay in the
+    shared config where they are committed and reviewable, and an override here
+    would change output on one machine only.
 
     `exclude_paths` is the one key that can safely be per-machine. It only ever
     protects more, never less, so it cannot make the two entry points disagree
     about how a file is handled - and since #85 both of them read this file, so
     a private exclusion protects the CLI as well as the hook.
+
+    `label` names the file in error messages; it defaults to the file name,
+    which is enough for config.local.json but not for a user-level file that
+    shares its name with the shared config.json.
     """
     if not local_path.exists():
         return config
 
+    label = label or local_path.name
     try:
         with open(local_path) as f:
             local = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        raise ConfigError(f"Cannot read {local_path.name}: {e}")
+        raise ConfigError(f"Cannot read {label}: {e}")
 
     if not isinstance(local, dict):
-        raise ConfigError(f"{local_path.name} must be a JSON object")
+        raise ConfigError(f"{label} must be a JSON object")
 
     unknown = [k for k in local
                if k != 'exclude_paths' and k != 'comment' and not k.endswith('_comment')]
     if unknown:
-        raise ConfigError(f"{local_path.name} may only set 'exclude_paths' (got {sorted(unknown)})")
+        raise ConfigError(f"{label} may only set 'exclude_paths' (got {sorted(unknown)})")
+
+    try:
+        extra = validate_exclude_paths(local.get('exclude_paths', []))
+    except ConfigError as e:
+        # Named, because there are now three files an entry can come from.
+        raise ConfigError(f"{label}: {e}")
 
     # .get, not indexing: `exclude_paths` is optional in config.json, as
     # load_exclude_paths already treats it, so a config without the key is a
     # legitimate one with nothing to extend rather than a fault. Indexing raised
     # KeyError here, which is not this function's documented failure type now
     # that it is re-exported and callable from outside.
-    config['exclude_paths'] = config.get('exclude_paths', []) + validate_exclude_paths(local.get('exclude_paths', []))
+    config['exclude_paths'] = config.get('exclude_paths', []) + extra
     return config
 
 
-def load_exclude_paths(config: dict, local_path: Path) -> tuple:
-    """The configured exclusions: config.json's list plus config.local.json's."""
-    merged = dict(config)
-    merged['exclude_paths'] = validate_exclude_paths(config.get('exclude_paths', []))
-    return tuple(merge_local_exclude_paths(merged, local_path)['exclude_paths'])
+def merge_user_exclude_paths(config: dict, user_path: Optional[Path]) -> dict:
+    """Merge the user-level config.json, by the same rules as config.local.json.
+
+    A missing file, or no user directory at all, leaves the config unchanged.
+    Errors name the full path, since 'config.json' alone would point at the
+    shared file instead.
+    """
+    if user_path is None:
+        return config
+    return merge_local_exclude_paths(config, user_path, label=str(user_path))
+
+
+def load_exclude_sources(config: dict, local_path: Path, user_path: Optional[Path] = None) -> tuple:
+    """Every configured exclusion with the file it came from, as (entry, source).
+
+    In order: config.json, config.local.json, then the user-level config.json.
+    The sources are what the CLI names when it skips a file, so a user can find
+    the entry responsible without searching three files.
+    """
+    pairs = [(e, 'config.json') for e in validate_exclude_paths(config.get('exclude_paths', []))]
+    local = merge_local_exclude_paths({}, local_path).get('exclude_paths', [])
+    pairs += [(e, str(local_path)) for e in local]
+    user = merge_user_exclude_paths({}, user_path).get('exclude_paths', [])
+    pairs += [(e, str(user_path)) for e in user]
+    return tuple(pairs)
+
+
+def load_exclude_paths(config: dict, local_path: Path, user_path: Optional[Path] = None) -> tuple:
+    """The configured exclusions: config.json's, config.local.json's, then the user's."""
+    return tuple(entry for entry, _ in load_exclude_sources(config, local_path, user_path))
+

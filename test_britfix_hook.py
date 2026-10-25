@@ -64,6 +64,26 @@ def test_merge_local_config_keeps_the_hook_wording(capsys, tmp_path):
             "(got ['strategies'])") in capsys.readouterr().err
 
 
+def test_merge_user_config_is_fatal_and_names_the_full_path(capsys, tmp_path):
+    p = tmp_path / "britfix" / "config.json"
+    p.parent.mkdir()
+    p.write_text('{"exclude_paths": [""]}')
+    with pytest.raises(SystemExit) as exc:
+        h.merge_user_config({"strategies": {}, "exclude_paths": []}, p)
+    assert exc.value.code == 1
+    assert (f"[Britfix Error] {p}: 'exclude_paths' entries must be non-empty strings"
+            in capsys.readouterr().err)
+
+
+def test_merge_user_config_appends_and_tolerates_absence(tmp_path):
+    p = tmp_path / "config.json"
+    base = {"strategies": {}, "exclude_paths": ["/shared/"]}
+    assert h.merge_user_config(dict(base), p) == base
+    assert h.merge_user_config(dict(base), None) == base
+    p.write_text('{"exclude_paths": ["/upstream/"]}')
+    assert h.merge_user_config(dict(base), p)["exclude_paths"] == ["/shared/", "/upstream/"]
+
+
 # --- path_is_excluded (matching) -------------------------------------------
 
 def test_path_is_excluded_match():
@@ -850,6 +870,26 @@ def test_missing_config_keeps_the_hook_diagnostic(tmp_path):
 
     assert result.returncode == 1
     assert '[Britfix Error] Config file not found:' in result.stderr
+    assert log_file.exists()
+
+
+def test_bad_user_config_stops_the_hook_with_its_own_diagnostic(tmp_path):
+    """The real load path: the hook reads the user-level file at import.
+
+    conftest points XDG_CONFIG_HOME at an empty temporary home, which the
+    subprocess inherits, so this is the only user file it can find.
+    """
+    import britfix_config
+
+    user = britfix_config.user_config_path()
+    user.parent.mkdir(parents=True, exist_ok=True)
+    user.write_text('{"strategies": {}}')
+    config = (Path(h.__file__).resolve().parent / 'config.json').read_text()
+    result, log_file = _drive_hook_subprocess(tmp_path, _hook_tree(tmp_path, config))
+
+    assert result.returncode == 1
+    assert (f"[Britfix Error] {user} may only set 'exclude_paths' (got ['strategies'])"
+            in result.stderr)
     assert log_file.exists()
 
 

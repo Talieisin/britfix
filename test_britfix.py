@@ -1934,6 +1934,175 @@ class TestHookAndCLIShareTheExclusionPolicy:
         assert '/Transcripts/' in hook
 
 
+class TestUserExcludeConfig:
+    """The user-level config.json beside the user ignore file.
+
+    conftest points XDG_CONFIG_HOME and APPDATA at an empty temporary home, so
+    these tests write the file there; the developer's own file is never read.
+    """
+
+    def _base(self):
+        return {'strategies': {}, 'exclude_paths': ['/shared/']}
+
+    def _write(self, path, payload):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload if isinstance(payload, str) else json.dumps(payload), encoding='utf-8')
+        return path
+
+    def _user(self, payload):
+        return self._write(britfix_core.user_config_path(), payload)
+
+    def test_default_location_is_beside_the_user_ignore_file(self, monkeypatch):
+        monkeypatch.setattr(os, 'name', 'posix')
+        monkeypatch.delenv('XDG_CONFIG_HOME', raising=False)
+        assert britfix_core.user_config_path() == Path.home() / '.config' / 'britfix' / 'config.json'
+        assert britfix_core.user_config_path().parent == get_user_ignore_path().parent
+
+    def test_xdg_config_home_is_respected(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(os, 'name', 'posix')
+        monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'xdg'))
+        assert britfix_core.user_config_path() == tmp_path / 'xdg' / 'britfix' / 'config.json'
+
+    def test_relative_xdg_config_home_is_treated_as_unset(self, monkeypatch, tmp_path):
+        """The XDG spec says to ignore it, and the hook runs the CLI from its
+        own directory, so a relative value would name two different files."""
+        monkeypatch.setattr(os, 'name', 'posix')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv('XDG_CONFIG_HOME', 'relative-config')
+        assert britfix_core.user_config_path() == Path.home() / '.config' / 'britfix' / 'config.json'
+        assert get_user_ignore_path() == Path.home() / '.config' / 'britfix' / 'ignore'
+
+    def test_windows_without_appdata_has_no_user_config(self, monkeypatch):
+        monkeypatch.setattr(os, 'name', 'nt')
+        monkeypatch.delenv('APPDATA', raising=False)
+        assert britfix_core.user_config_path() is None
+        # And None means nothing to merge, not an error.
+        assert britfix_core.merge_user_exclude_paths(self._base(), None) == self._base()
+
+    @pytest.mark.skipif(os.name != 'nt', reason="WindowsPath unavailable on non-Windows")
+    def test_windows_uses_appdata(self, monkeypatch):
+        monkeypatch.setenv('APPDATA', 'C:\\Users\\test\\AppData\\Roaming')
+        assert str(britfix_core.user_config_path()).endswith('britfix\\config.json')
+
+    def test_missing_file_is_a_noop(self):
+        assert not britfix_core.user_config_path().exists()
+        assert load_exclude_paths(self._base(), Path('/nonexistent/config.local.json'),
+                                  britfix_core.user_config_path()) == ('/shared/',)
+
+    def test_entries_are_appended_after_the_local_file(self, tmp_path):
+        local = self._write(tmp_path / 'config.local.json', {'exclude_paths': ['/private/']})
+        user = self._user({'exclude_paths': ['/upstream/']})
+        assert load_exclude_paths(self._base(), local, user) == ('/shared/', '/private/', '/upstream/')
+
+    def test_sources_name_each_file(self, tmp_path):
+        local = self._write(tmp_path / 'config.local.json', {'exclude_paths': ['/private/']})
+        user = self._user({'exclude_paths': ['/upstream/']})
+        assert britfix_core.load_exclude_sources(self._base(), local, user) == (
+            ('/shared/', 'config.json'),
+            ('/private/', str(local)),
+            ('/upstream/', str(user)),
+        )
+
+    def test_comment_keys_are_allowed(self):
+        user = self._user({'comment': 'mine', 'paths_comment': 'also mine',
+                           'exclude_paths': ['/upstream/']})
+        assert load_exclude_paths(self._base(), Path('/nonexistent'), user) == ('/shared/', '/upstream/')
+
+    @pytest.mark.parametrize('payload, message', [
+        ({'strategies': {}}, "may only set 'exclude_paths'"),
+        ('{not json', 'Cannot read'),
+        (['/upstream/'], 'must be a JSON object'),
+        ({'exclude_paths': ['']}, 'entries must be non-empty strings'),
+        ({'exclude_paths': [3]}, 'entries must be non-empty strings'),
+        ({'exclude_paths': '/upstream/'}, "must be a list"),
+    ], ids=['strategies', 'bad_json', 'not_an_object', 'empty_entry', 'non_string', 'not_a_list'])
+    def test_invalid_file_is_a_config_error_naming_its_full_path(self, payload, message):
+        """'config.json' alone would point at the shared file instead."""
+        user = self._user(payload)
+        with pytest.raises(ConfigError) as exc:
+            load_exclude_paths(self._base(), Path('/nonexistent'), user)
+        assert message in str(exc.value)
+        assert str(user) in str(exc.value)
+
+    def test_local_file_errors_now_name_it_too(self, tmp_path):
+        local = self._write(tmp_path / 'config.local.json', {'exclude_paths': ['']})
+        with pytest.raises(ConfigError, match=r"^config\.local\.json: 'exclude_paths' entries"):
+            merge_local_exclude_paths(self._base(), local)
+
+    def test_cli_names_the_entry_and_its_source(self, tmp_path, monkeypatch, capsys):
+        user = str(britfix_core.user_config_path())
+        monkeypatch.setattr(britfix_core, '_EXCLUDE_SOURCES', (('/verbatim/', user),))
+        monkeypatch.setattr(britfix_core, 'get_exclude_paths', lambda: ('/verbatim/',))
+        path = tmp_path / 'verbatim' / 'quote.md'
+        path.parent.mkdir()
+        path.write_text('The color.\n', encoding='utf-8')
+        monkeypatch.setattr(sys, 'argv', ['britfix', '--input', str(path), '--no-backup'])
+        britfix.main()
+        err = capsys.readouterr().err
+        line = next(l for l in err.splitlines() if l.startswith('britfix: skipped '))
+        detail = json.loads(line[len('britfix: skipped '):])
+        assert detail == {'path': str(path),
+                          'reason': f"excluded by exclude_paths entry '/verbatim/' in {user}"}
+        assert path.read_text(encoding='utf-8') == 'The color.\n'
+
+    def _run_cli(self, target):
+        """The real tree, in a subprocess: the loader is not patched there.
+
+        The suite's inert BRITFIX_LOCAL_CONFIG and its XDG_CONFIG_HOME are
+        inherited, so the user file this class writes is the only extra one.
+        """
+        return subprocess.run(
+            [sys.executable, 'britfix.py', '--input', str(target), '--no-backup', '--quiet'],
+            cwd=Path(britfix.__file__).parent, capture_output=True, text=True, timeout=60,
+        )
+
+    def test_user_config_protects_the_cli(self, tmp_path):
+        user = self._user({'exclude_paths': ['/upstream/']})
+        source = 'The color of the harbor.\n'
+        target = tmp_path / 'upstream' / 'notes.md'
+        target.parent.mkdir()
+        target.write_text(source, encoding='utf-8')
+        control = tmp_path / 'mine.md'
+        control.write_text(source, encoding='utf-8')
+
+        result = self._run_cli(target)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert target.read_text(encoding='utf-8') == source
+        assert f"excluded by exclude_paths entry '/upstream/' in {user}" in result.stderr
+
+        result = self._run_cli(control)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert control.read_text(encoding='utf-8') == 'The colour of the harbour.\n'
+
+    def test_bad_user_config_stops_the_cli(self, tmp_path):
+        user = self._user({'exclude_paths': ['']})
+        target = tmp_path / 'notes.md'
+        target.write_text('The color.\n', encoding='utf-8')
+
+        result = self._run_cli(target)
+        assert result.returncode == 1
+        assert 'Britfix config error' in result.stderr
+        assert str(user) in result.stderr
+        assert target.read_text(encoding='utf-8') == 'The color.\n'
+
+    def test_both_entry_points_load_the_user_exclusions(self):
+        """Fresh interpreter, for the reason given in the local-file version."""
+        self._user({'exclude_paths': ['/upstream/']})
+        probe = (
+            'import json, britfix_core, britfix_hook; '
+            'print(json.dumps([list(britfix_hook.EXCLUDE_PATHS), '
+            'list(britfix_core.get_exclude_paths())]))'
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', probe],
+            cwd=Path(britfix_core.__file__).parent,
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        hook, cli = json.loads(result.stdout)
+        assert hook == cli
+        assert hook[-1] == '/upstream/'
+
+
 class TestBritfixIgnoreParsing:
     """Test .britfixignore file parsing."""
 

@@ -54,7 +54,7 @@ def clear_to_end():
 import britfix_core
 from britfix_core import (
     ConfigError,
-    path_is_excluded,
+    matching_exclude_path,
     SpellingCorrector,
     load_spelling_mappings,
     get_file_strategy,
@@ -450,8 +450,15 @@ Examples:
             # Verbatim-content protection, checked before the extension gate
             # because the hook checks it first too, so a file both gates would
             # catch is reported with the same reason by either entry point.
-            if path_is_excluded(filepath, exclude_paths):
-                raise ProcessingSkipped('excluded by exclude_paths')
+            excluded_by = matching_exclude_path(filepath, exclude_paths)
+            if excluded_by is not None:
+                # Name the entry and the file it came from: exclusions are
+                # read from three files, one of them outside this checkout.
+                reason = f'excluded by exclude_paths entry {excluded_by!r}'
+                sources = britfix_core.exclude_path_sources(excluded_by)
+                if sources:
+                    reason += f" in {', '.join(sources)}"
+                raise ProcessingSkipped(reason)
 
             # Get the appropriate processing strategy
             ext = os.path.splitext(filepath)[1].lower()

@@ -20,6 +20,25 @@ def test_suite_does_not_inherit_user_ignores(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_suite_does_not_inherit_user_exclusions(tmp_path):
+    """A personal ~/.config/britfix/config.json must not reach the suite either.
+
+    '/' excludes every path, so if the parent's XDG_CONFIG_HOME leaked into
+    the inner run its subprocess CLI test would skip its fixture and fail.
+    """
+    config = tmp_path / 'external-config'
+    (config / 'britfix').mkdir(parents=True)
+    (config / 'britfix' / 'config.json').write_text('{"exclude_paths": ["/"]}')
+    env = dict(os.environ, XDG_CONFIG_HOME=str(config), APPDATA=str(config))
+    result = subprocess.run(
+        [sys.executable, '-m', 'pytest', '-q',
+         'test_config_isolation.py::test_subprocess_runs_ignore_the_developer_config',
+         'test_britfix.py::TestUserExcludeConfig::test_missing_file_is_a_noop'],
+        cwd=Path(__file__).parent, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_developer_exclusions_do_not_reach_the_suite(monkeypatch, tmp_path):
     """A personal config.local.json must not change what the suite processes.
 
@@ -34,7 +53,7 @@ def test_developer_exclusions_do_not_reach_the_suite(monkeypatch, tmp_path):
 
     local = tmp_path / 'config.local.json'
     local.write_text('{"exclude_paths": ["/"]}')
-    monkeypatch.setattr(britfix_core, '_EXCLUDE_PATHS', None)
+    monkeypatch.setattr(britfix_core, '_EXCLUDE_SOURCES', None)
     monkeypatch.setenv('BRITFIX_LOCAL_CONFIG', str(local))
 
     # The loader really would exclude every path there is ...
