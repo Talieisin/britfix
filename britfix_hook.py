@@ -69,6 +69,18 @@ def merge_local_config(config: dict, local_path: Path) -> dict:
         sys.exit(1)
 
 
+def merge_user_config(config: dict, user_path) -> dict:
+    """Merge the optional user-level config.json (see user_config_path).
+
+    The same rules as config.local.json, through the same shared function, so
+    the hook and the CLI read one list. A missing file is the normal state."""
+    try:
+        return britfix_config.merge_user_exclude_paths(config, user_path)
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
+        sys.exit(1)
+
+
 def local_config_path() -> Path:
     """Where config.local.json is read from, with the hook's fatal contract."""
     try:
@@ -78,9 +90,19 @@ def local_config_path() -> Path:
         sys.exit(1)
 
 
+def user_config_path():
+    """Where the user-level config.json is read from, with the hook's fatal contract."""
+    try:
+        return britfix_config.user_config_path()
+    except ConfigError as e:
+        log(f"[Britfix Error] {e}")
+        sys.exit(1)
+
+
 # Load and validate config
 def load_config():
-    """Load and validate config.json (plus optional config.local.json). Exits if invalid."""
+    """Load and validate config.json (plus optional config.local.json and the
+    user-level config.json). Exits if invalid."""
     config_path = HOOK_DIR / 'config.json'
 
     if not config_path.exists():
@@ -103,6 +125,8 @@ def load_config():
     # different local files. Unset, this is HOOK_DIR / 'config.local.json' as
     # before.
     config = merge_local_config(config, local_config_path())
+    # Then the user-level file, last, in the order the CLI reads them.
+    config = merge_user_config(config, user_config_path())
 
     return config
 

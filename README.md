@@ -187,6 +187,11 @@ A personal ignore file applies to all projects:
 - **Linux/macOS**: `~/.config/britfix/ignore` (or `$XDG_CONFIG_HOME/britfix/ignore` if set)
 - **Windows**: `%APPDATA%\britfix\ignore`
 
+A relative `$XDG_CONFIG_HOME` is treated as unset, as the XDG Base Directory
+specification asks, so `~/.config` is used instead. The same directory holds a
+personal [`config.json`](#user-level-exclusions-configjson-in-your-config-directory)
+for path exclusions.
+
 ### Example
 
 With this `.britfixignore` at your project root:
@@ -258,9 +263,14 @@ Notes:
   empty string, which would match every path) is a fatal config error: britfix
   refuses to run rather than silently processing files you asked it to
   protect.
+- Entries come from up to three files, merged in this order: the shared
+  `config.json`, [`config.local.json`](#local-overrides-configlocaljson) and
+  your [user-level `config.json`](#user-level-exclusions-configjson-in-your-config-directory).
+  Each one can only add exclusions.
 - Both entry points honour it. The hook skips the file silently; the CLI
-  reports a `britfix: skipped` diagnostic naming the path and counts it in the
-  summary.
+  reports a `britfix: skipped` diagnostic naming the path, the entry that
+  matched and the file it came from, and counts it in the summary, for example
+  `excluded by exclude_paths entry '/vendor/' in /Users/me/.config/britfix/config.json`.
 - A relative path given to the CLI is resolved before matching, so one entry
   covers both `britfix --input notes/ep.md` and the absolute path the hook is
   given.
@@ -288,7 +298,7 @@ output on one machine only. `exclude_paths` is the one setting that is safe to
 keep per-machine, because it only ever protects more.
 
 The file is never bundled into the built binary, so a `just build` executable
-sees the committed `exclude_paths` only. The hook runs the source tree, so the
+sees the committed `exclude_paths` and your user-level ones only. The hook runs the source tree, so the
 hook and the britfix it invokes both see your local file.
 
 `BRITFIX_LOCAL_CONFIG` points both entry points at a different local config. It
@@ -299,6 +309,31 @@ path that does not exist, britfix refuses to run: one stray variable silently tu
 off every private exclusion, on both entry points, is the failure this setting
 exists to prevent. To ignore your local config, point it at a file containing
 `{}`.
+
+### User-level exclusions (`config.json` in your config directory)
+
+Exclusions that belong to you rather than to one checkout of britfix, such as
+other people's code wherever you clone it, go in a `config.json` beside your
+[user-level ignore file](#user-level-config):
+
+- **Linux/macOS**: `~/.config/britfix/config.json` (or `$XDG_CONFIG_HOME/britfix/config.json` if set)
+- **Windows**: `%APPDATA%\britfix\config.json`
+
+```json
+{
+  "comment": "Other people's code: leave its spelling alone.",
+  "exclude_paths": ["/Projects/upstream/", "/third_party/"]
+}
+```
+
+Its entries are appended after those of `config.json` and `config.local.json`.
+It follows the same rules as `config.local.json`: it may only set
+`exclude_paths` and comment keys, entries must be non-empty strings, and
+anything invalid is a fatal config error, reported with the file's full path.
+A missing file is fine. The hook, the CLI and a `just build` binary all read
+it, since it lives outside the tree. `BRITFIX_LOCAL_CONFIG` does not affect it;
+the test suite isolates it by pointing `XDG_CONFIG_HOME` and `APPDATA` at a
+temporary directory.
 
 ## Hook Integration
 
