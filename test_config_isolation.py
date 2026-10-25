@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 def test_suite_does_not_inherit_user_ignores(tmp_path):
     config = tmp_path / 'external-config'
@@ -37,6 +39,40 @@ def test_suite_does_not_inherit_user_exclusions(tmp_path):
         cwd=Path(__file__).parent, env=env, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('source', ['xdg', 'home', 'local_override'])
+def test_invalid_personal_config_does_not_abort_collection(tmp_path, source):
+    """test_britfix_hook imports the hook at collection, before any fixture.
+
+    The hook loads every exclusion file at import and exits on an invalid one,
+    so a broken personal config used to abort the whole run there. conftest's
+    pytest_configure now isolates the environment before collection. The inner
+    run collects a hook test to prove it, and runs one that reads the user path.
+    """
+    bad = '{"exclude_paths": [""]}'
+    env = dict(os.environ)
+    if source == 'local_override':
+        local = tmp_path / 'config.local.json'
+        local.write_text(bad)
+        env['BRITFIX_LOCAL_CONFIG'] = str(local)
+    else:
+        root = tmp_path / ('xdg' if source == 'xdg' else 'home/.config')
+        (root / 'britfix').mkdir(parents=True)
+        (root / 'britfix' / 'config.json').write_text(bad)
+        if source == 'xdg':
+            env.update(XDG_CONFIG_HOME=str(root), APPDATA=str(root))
+        else:
+            env['HOME'] = str(tmp_path / 'home')
+            env.pop('XDG_CONFIG_HOME', None)
+    result = subprocess.run(
+        [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
+         'test_britfix_hook.py::test_validate_exclude_paths_empty',
+         'test_britfix.py::TestUserExcludeConfig::test_missing_file_is_a_noop'],
+        cwd=Path(__file__).parent, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '2 passed' in result.stdout, result.stdout + result.stderr
 
 
 def test_developer_exclusions_do_not_reach_the_suite(monkeypatch, tmp_path):
