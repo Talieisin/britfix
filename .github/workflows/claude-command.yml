@@ -1,4 +1,6 @@
-# managed-by: talieisin-org-bootstrap v2
+# managed-by: talieisin-org-bootstrap v7
+# Hub reference pinned to a Talieisin/.github commit (every caller job
+# receives org secrets); the nightly sweep proposes each bump.
 # `@claude <question>` in a PR conversation or issue comment: an
 # unprivileged Claude round researches the question against this repo and
 # posts the answer.
@@ -25,7 +27,7 @@ permissions:
 jobs:
   command:
     if: startsWith(github.event.comment.body, '@claude ') || github.event.comment.body == '@claude'
-    uses: Talieisin/.github/.github/workflows/claude-command.yml@main
+    uses: Talieisin/.github/.github/workflows/claude-command.yml@564a9b6f13c29eaeecf6db6c5d054bd6ac1f57e5 # main 2026-11-19
     with:
       model: sonnet
     secrets:
