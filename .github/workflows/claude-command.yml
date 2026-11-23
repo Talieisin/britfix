@@ -28,8 +28,8 @@ jobs:
   command:
     if: startsWith(github.event.comment.body, '@claude ') || github.event.comment.body == '@claude'
     uses: Talieisin/.github/.github/workflows/claude-command.yml@564a9b6f13c29eaeecf6db6c5d054bd6ac1f57e5 # main 2026-11-19
-    with:
-      model: sonnet
+    # No model input: the hub's default is the single source, so it moves
+    # with the hub commit pinned above.
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       TALIEISIN_AUTOMATION_APP_ID: ${{ secrets.TALIEISIN_AUTOMATION_APP_ID }}
