@@ -1,4 +1,6 @@
-# managed-by: talieisin-org-bootstrap v6
+# managed-by: talieisin-org-bootstrap v7
+# Hub reference pinned to a Talieisin/.github commit (every caller job
+# receives org secrets); the nightly sweep proposes each bump.
 # Fires when the org dispatcher labels a major Dependabot PR `ai-upgrade`,
 # and when it dispatches a response round for a Copilot review.
 # All logic lives in the org's shared reusable workflows; operational
@@ -31,7 +33,7 @@ permissions:
 jobs:
   upgrade:
     if: github.event_name == 'pull_request' && github.event.label.name == 'ai-upgrade'
-    uses: Talieisin/.github/.github/workflows/dependabot-upgrade.yml@main
+    uses: Talieisin/.github/.github/workflows/dependabot-upgrade.yml@564a9b6f13c29eaeecf6db6c5d054bd6ac1f57e5 # main 2026-11-19
     with:
       setup: uv
     secrets:
@@ -47,7 +49,7 @@ jobs:
 
   copilot-response:
     if: github.event_name == 'workflow_dispatch'
-    uses: Talieisin/.github/.github/workflows/copilot-response.yml@main
+    uses: Talieisin/.github/.github/workflows/copilot-response.yml@564a9b6f13c29eaeecf6db6c5d054bd6ac1f57e5 # main 2026-11-19
     with:
       setup: uv
       pr-number: ${{ inputs.pr-number }}
