@@ -33,7 +33,7 @@ permissions:
 jobs:
   upgrade:
     if: github.event_name == 'pull_request' && github.event.label.name == 'ai-upgrade'
-    uses: Talieisin/.github/.github/workflows/dependabot-upgrade.yml@564a9b6f13c29eaeecf6db6c5d054bd6ac1f57e5 # main 2026-11-19
+    uses: Talieisin/.github/.github/workflows/dependabot-upgrade.yml@9e3645b8c740a77a7554dafa3b4ee1e4e861dd35 # main 2026-11-23
     with:
       setup: uv
     secrets:
@@ -49,7 +49,7 @@ jobs:
 
   copilot-response:
     if: github.event_name == 'workflow_dispatch'
-    uses: Talieisin/.github/.github/workflows/copilot-response.yml@564a9b6f13c29eaeecf6db6c5d054bd6ac1f57e5 # main 2026-11-19
+    uses: Talieisin/.github/.github/workflows/copilot-response.yml@9e3645b8c740a77a7554dafa3b4ee1e4e861dd35 # main 2026-11-23
     with:
       setup: uv
       pr-number: ${{ inputs.pr-number }}
